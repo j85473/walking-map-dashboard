@@ -1,0 +1,19 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+
+model Walk {
+  id            String   @id
+  name          String
+  date          DateTime
+  distanceMiles Float
+  steps         Int
+  track         Json
+  createdAt     DateTime @default(now())
+}
