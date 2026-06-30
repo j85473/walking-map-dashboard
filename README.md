@@ -2,6 +2,10 @@
 
 A full-stack Next.js web application designed to track, map, and analyze walking routes to help traverse every street in downtown Minneapolis.
 
+## Why I Built This
+
+I created this project to visualize urban walkability and gamify the experience of exploring my own city. By combining raw GPS data parsing with spatial grid mapping, I can precisely track which streets I've conquered and automatically generate novel routes to help me finish walking the entire downtown grid.
+
 ## Features
 
 - **Activity Parsing**: Automatically parses and extracts GPS coordinates from `.gpx`, `.xml`, `.fit`, and compressed `.fit.gz` files (e.g., from Garmin or Strava exports).
