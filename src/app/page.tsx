@@ -55,7 +55,7 @@ export default function Home() {
   
   // Load from Postgres API on mount
   useEffect(() => {
-    fetch('/api/walks')
+    fetch('/api/walks', { cache: 'no-store' })
       .then(res => res.json())
       .then((saved) => {
         if (Array.isArray(saved)) {
