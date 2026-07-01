@@ -13,7 +13,11 @@ export async function GET() {
     const walks = await prisma.walk.findMany({
       orderBy: { date: 'desc' }
     });
-    return NextResponse.json(walks);
+    const parsedWalks = walks.map(w => ({
+      ...w,
+      points: typeof w.track === 'string' ? JSON.parse(w.track) : w.track
+    }));
+    return NextResponse.json(parsedWalks);
   } catch (error) {
     console.error("GET walks error:", error);
     const err = error as Error;
@@ -39,7 +43,7 @@ export async function POST(req: NextRequest) {
             date: new Date(walk.date),
             distanceMiles: walk.distanceMiles,
             steps: walk.steps,
-            track: walk.track,
+            track: JSON.stringify(walk.points || []),
           },
           create: {
             id: walk.id,
@@ -47,7 +51,7 @@ export async function POST(req: NextRequest) {
             date: new Date(walk.date),
             distanceMiles: walk.distanceMiles,
             steps: walk.steps,
-            track: walk.track,
+            track: JSON.stringify(walk.points || []),
           }
         })
       )

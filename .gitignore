@@ -50,3 +50,7 @@ temp.json
 *.fit
 *.fit.gz
 /exports/
+
+*.db
+*.sqlite
+*.sqlite-journal
