@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
             date: new Date(walk.date),
             distanceMiles: walk.distanceMiles,
             steps: walk.steps,
-            track: JSON.stringify(walk.points || []),
+            track: walk.points || [],
           },
           create: {
             id: walk.id,
@@ -51,7 +51,7 @@ export async function POST(req: NextRequest) {
             date: new Date(walk.date),
             distanceMiles: walk.distanceMiles,
             steps: walk.steps,
-            track: JSON.stringify(walk.points || []),
+            track: walk.points || [],
           }
         })
       )
