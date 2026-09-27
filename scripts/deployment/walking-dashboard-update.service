@@ -1,0 +1,10 @@
+[Unit]
+Description=Deploy verified Walking Dashboard main to M70
+Wants=network-online.target
+After=network-online.target tailscaled.service postgresql.service
+ConditionPathExists=/etc/walking-dashboard/runtime.env
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/walking-dashboard-update
+TimeoutStartSec=30min

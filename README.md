@@ -25,7 +25,7 @@ I created this project to visualize urban walkability and gamify the experience 
 - **Database**: PostgreSQL, Prisma ORM
 - **Styling**: Tailwind CSS, Lucide Icons
 
-## Getting Started
+## Local development
 
 First, install dependencies and set up the database:
 ```bash
@@ -40,3 +40,20 @@ npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the dashboard.
+
+## M70 production
+
+The production URL is [http://100.107.116.123:3005](http://100.107.116.123:3005) on Joseph's Tailscale network. The application runs under its own `walking-dashboard` system account and uses the `walking_map` schema in M70's PostgreSQL database through a separate database login. Database credentials and GPS tracks stay on the M70, outside Git. The Pi deployment script and PM2 configuration have been retired.
+
+Pushes to `main` trigger the [Verify Walking Dashboard](.github/workflows/verify.yml) GitHub Actions workflow. The M70 checks GitHub every five minutes and activates the exact commit only after its lint and build checks succeed. It builds into a new release directory, switches the `/opt/walking-dashboard` symlink, checks `/api/health`, and restores the previous release if health fails. The timer and web app are supervised by systemd.
+
+The one-time host setup is `sudo bash scripts/deployment/bootstrap-m70.sh` from a checkout on the M70. It backs up the existing `walking_map` schema before enabling a new writer, creates a restricted database login, and installs the service and timer. It never runs `prisma db push` against the production database. The M70's walking records came from the September 2026 whole-database migration; compare them with the Pi before any future import if the Pi comes back online. Do not restore the Pi's copy over newer M70 walks.
+
+Useful checks on the M70:
+
+```bash
+systemctl status walking-dashboard.service walking-dashboard-update.timer
+journalctl -u walking-dashboard-update.service -n 80 --no-pager
+curl -fsS http://100.107.116.123:3005/api/health
+cat /var/lib/walking-dashboard/active-revision
+```
