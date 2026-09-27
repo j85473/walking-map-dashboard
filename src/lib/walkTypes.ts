@@ -15,9 +15,9 @@ export type WalkSummary = {
 };
 
 export type ColorOpacities = {
-  green: number;
-  yellow: number;
-  orange: number;
+  blue: number;
+  cyan: number;
+  amber: number;
   red: number;
   purple: number;
 };

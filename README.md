@@ -9,7 +9,7 @@ I created this project to visualize urban walkability and gamify the experience 
 ## Features
 
 - **Activity Parsing**: Automatically parses and extracts GPS coordinates from `.gpx`, `.xml`, `.fit`, and compressed `.fit.gz` files (e.g., from Garmin or Strava exports).
-- **Interactive Heatmap**: Visualizes all logged walks on an interactive Leaflet map, with color intensity controls and street-aligned lines in the mapped downtown area.
+- **Interactive Heatmap**: Visualizes all logged walks on an interactive Leaflet map, with a blue-to-purple intensity scale and street-aligned lines in the mapped downtown area.
 - **Striding Progress**: Uses spatial grids and Haversine distance calculations to estimate downtown street mileage explored and remaining.
 - **Next Walk Generator**: Algorithmically generates novel walking routes (up to 9 waypoints) prioritizing unwalked streets, and exports directly to Google Maps navigation.
 - **Database Integration**: Synchronizes walk data, dates, distances, and step counts to a PostgreSQL database via Prisma ORM for persistent storage.
@@ -40,7 +40,7 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the dashboard.
 
-The server renders totals from a database aggregate. `/api/dashboard` computes street progress and matches nearby GPS samples to the bundled downtown street centerlines using full tracks. The heatmap draws those matched sections on streets and uses five-meter-simplified GPS traces beyond the mapped downtown area. The full points remain in PostgreSQL and can be exported through `/api/walks`. Snapshots are cached for five minutes and invalidated after an upload. `npm run lint`, `npm test`, and `npm run build` are the verification checks.
+The server renders totals from a database aggregate. `/api/dashboard` computes street progress and matches nearby GPS samples to the bundled downtown street centerlines using full tracks. The heatmap draws those matched sections on streets and uses five-meter-simplified GPS traces beyond the mapped downtown area. The full points remain in PostgreSQL and can be exported through `/api/walks`. The browser uploads up to 20 validated walks per request, splitting batches below the API body limit, and refreshes the map once after the selection finishes. Snapshots are cached for five minutes and invalidated after an upload. `npm run lint`, `npm test`, and `npm run build` are the verification checks.
 
 ## M70 production
 

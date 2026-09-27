@@ -5,13 +5,13 @@ import type { Walk, ColorOpacities } from "@/lib/walkTypes";
 import type { StreetHeatmap, StreetHeatSegment } from "@/lib/streetHeatmap";
 
 const colors = [
-  [55, 239, 170],  // green
-  [255, 218, 89],  // yellow
-  [255, 154, 72],  // orange
-  [255, 98, 93],   // red
-  [193, 137, 255], // purple
+  [77, 159, 255],  // blue
+  [105, 217, 255], // cyan
+  [245, 166, 35],  // amber
+  [240, 91, 91],   // red
+  [190, 133, 255], // purple
 ] as const;
-const colorKeys = ["green", "yellow", "orange", "red", "purple"] as const;
+const colorKeys = ["blue", "cyan", "amber", "red", "purple"] as const;
 
 function colorBand(visits: number) {
   if (visits <= 2) return 0;
@@ -57,7 +57,7 @@ export default function LineHeatmapLayer({ walks, heatmap, opacities }: {
       }
       ctx.globalAlpha = 0.76;
       ctx.lineWidth = lineWidth + 2.4;
-      ctx.strokeStyle = "#06140f";
+      ctx.strokeStyle = "#040b1d";
       ctx.stroke();
 
       for (let band = 0; band < colors.length; band++) {

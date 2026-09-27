@@ -7,17 +7,18 @@ import CalendarModal from "./CalendarModal";
 import type { DashboardSnapshot } from "@/lib/dashboardData";
 import type { ColorOpacities, WalkSummary } from "@/lib/walkTypes";
 import { parseWalkFile } from "@/lib/parseWalkFile";
+import { makeUploadBatches, type UploadBatch, type UploadItem } from "@/lib/uploadBatches";
 import { generateWalkUrl } from "../utils/routeGenerator";
 
 const Map = dynamic(() => import("./Map"), { ssr: false });
-const initialOpacities: ColorOpacities = { green: 2.5, yellow: 2.5, orange: 2.5, red: 2.5, purple: 2.5 };
+const initialOpacities: ColorOpacities = { blue: 6, cyan: 2.5, amber: 2.5, red: 2.5, purple: 2.5 };
 const noWalks: DashboardSnapshot["walks"] = [];
 const colorSettings = [
-  { key: "green", label: "Green", color: "#30d3a0" },
-  { key: "yellow", label: "Yellow", color: "#f5c766" },
-  { key: "orange", label: "Orange", color: "#ff9b5e" },
-  { key: "red", label: "Red", color: "#ff706c" },
-  { key: "purple", label: "Purple", color: "#b48dff" },
+  { key: "blue", label: "Blue", color: "#4d9fff" },
+  { key: "cyan", label: "Cyan", color: "#69d9ff" },
+  { key: "amber", label: "Amber", color: "#f5a623" },
+  { key: "red", label: "Red", color: "#f05b5b" },
+  { key: "purple", label: "Purple", color: "#be85ff" },
 ] as const;
 
 function dateKey(value: string) {
@@ -41,7 +42,7 @@ export default function DashboardClient({ initialSummary }: { initialSummary: Wa
   const [opacities, setOpacities] = useState<ColorOpacities>(initialOpacities);
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState({ current: 0, total: 0 });
+  const [uploadProgress, setUploadProgress] = useState({ current: 0, total: 0, phase: "preparing" as "preparing" | "saving" });
   const inputRef = useRef<HTMLInputElement>(null);
   const requestRef = useRef<AbortController | null>(null);
 
@@ -94,39 +95,65 @@ export default function DashboardClient({ initialSummary }: { initialSummary: Wa
     }
     setIsUploading(true);
     setMessage(null);
-    setUploadProgress({ current: 0, total: validFiles.length });
+    setUploadProgress({ current: 0, total: validFiles.length, phase: "preparing" });
     let saved = 0;
     let skipped = 0;
-    let failures = 0;
+    const failedFiles = new Set<number>();
+    const oversizedFiles = new Set<number>();
+    const postBatch = async (batch: UploadBatch) => {
+      const response = await fetch("/api/walks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: batch.body,
+      });
+      if (!response.ok) throw new Error(`Save failed (${response.status}).`);
+      saved += batch.items.length;
+    };
     try {
-      for (const [index, file] of validFiles.entries()) {
-        try {
-          const walks = await parseWalkFile(file);
-          if (!walks.length) {
-            skipped++;
-          } else {
-            for (const walk of walks) {
-              const response = await fetch("/api/walks", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify([walk]),
-              });
-              if (!response.ok) throw new Error(`${file.name}: save failed (${response.status}).`);
-              saved++;
+      for (let start = 0; start < validFiles.length; start += 20) {
+        const items: UploadItem[] = [];
+        const end = Math.min(start + 20, validFiles.length);
+        for (let index = start; index < end; index++) {
+          try {
+            const walks = await parseWalkFile(validFiles[index]);
+            if (!walks.length) skipped++;
+            else for (const walk of walks) items.push({ walk, fileIndex: index });
+          } catch (error) {
+            console.error("Walk parsing failed", validFiles[index].name, error);
+            failedFiles.add(index);
+          }
+          setUploadProgress({ current: index + 1, total: validFiles.length, phase: "preparing" });
+        }
+        const { batches, oversized } = makeUploadBatches(items);
+        for (const item of oversized) {
+          failedFiles.add(item.fileIndex);
+          oversizedFiles.add(item.fileIndex);
+        }
+        setUploadProgress({ current: end, total: validFiles.length, phase: "saving" });
+        for (const batch of batches) {
+          try {
+            await postBatch(batch);
+          } catch (error) {
+            console.error("Walk batch failed; retrying individually", error);
+            // A malformed walk should not prevent the rest of the selection from saving.
+            for (const item of batch.items) {
+              try {
+                const [single] = makeUploadBatches([item]).batches;
+                await postBatch(single);
+              } catch (singleError) {
+                console.error("Walk upload failed", validFiles[item.fileIndex].name, singleError);
+                failedFiles.add(item.fileIndex);
+              }
             }
           }
-        } catch (error) {
-          console.error("Walk upload failed", file.name, error);
-          failures++;
         }
-        setUploadProgress({ current: index + 1, total: validFiles.length });
       }
       if (saved) {
         await loadSnapshot();
         setSelectedDate(null);
         setActiveWalkId(null);
       }
-      setMessage(`${saved} walk${saved === 1 ? "" : "s"} saved${skipped ? ` · ${skipped} skipped` : ""}${failures ? ` · ${failures} failed` : ""}.`);
+      setMessage(`${saved} walk${saved === 1 ? "" : "s"} saved${skipped ? ` · ${skipped} skipped` : ""}${failedFiles.size ? ` · ${failedFiles.size} failed` : ""}${oversizedFiles.size ? ` (${oversizedFiles.size} too large)` : ""}.`);
     } finally {
       setIsUploading(false);
     }
@@ -183,7 +210,7 @@ export default function DashboardClient({ initialSummary }: { initialSummary: Wa
                 <button className="route-button" onClick={planWalk} disabled={!progress}><span>Plan a walk</span><ArrowUpRight size={17} /></button>
               </section>
               <section className="controls-section"><div className="section-heading"><div><div className="section-kicker">MAKE THE MAP YOURS</div><h3>Heatmap intensity</h3></div></div><div className="sliders">{colorSettings.map(({ key, label, color }) => <label key={key} className="slider-row"><span className="swatch" style={{ background: color }} /><span>{label}</span><input aria-label={`${label} intensity`} disabled={viewRemaining} type="range" min="0.5" max="10" step="0.1" value={opacities[key]} onChange={event => setOpacities(previous => ({ ...previous, [key]: Number(event.target.value) }))} style={{ accentColor: color }} /><output>{opacities[key].toFixed(1)}×</output></label>)}</div></section>
-              <section className="upload-section-new"><div className="section-heading"><div><div className="section-kicker">KEEP EXPLORING</div><h3>Add your walks</h3></div></div><div className={`drop-zone ${isDragging ? "dragging" : ""}`} onDragOver={event => { event.preventDefault(); setIsDragging(true); }} onDragLeave={() => setIsDragging(false)} onDrop={event => { event.preventDefault(); setIsDragging(false); void uploadFiles(event.dataTransfer.files); }}><UploadCloud size={22} /><div><strong>{isUploading ? `Saving ${uploadProgress.current} of ${uploadProgress.total}` : "Drop GPX or FIT files here"}</strong><span>or choose files from your device</span></div><button disabled={isUploading} onClick={() => inputRef.current?.click()}>Browse files</button><input ref={inputRef} type="file" accept=".gpx,.xml,.fit,.fit.gz" multiple onChange={event => { if (event.target.files) void uploadFiles(event.target.files); event.target.value = ""; }} /></div></section>
+              <section className="upload-section-new"><div className="section-heading"><div><div className="section-kicker">KEEP EXPLORING</div><h3>Add your walks</h3></div></div><div className={`drop-zone ${isDragging ? "dragging" : ""}`} onDragOver={event => { event.preventDefault(); setIsDragging(true); }} onDragLeave={() => setIsDragging(false)} onDrop={event => { event.preventDefault(); setIsDragging(false); void uploadFiles(event.dataTransfer.files); }}><UploadCloud size={22} /><div><strong>{isUploading ? `${uploadProgress.phase === "saving" ? "Saving" : "Preparing"} ${uploadProgress.current} of ${uploadProgress.total} files` : "Drop GPX or FIT files here"}</strong><span>or choose files from your device</span></div><button disabled={isUploading} onClick={() => inputRef.current?.click()}>Browse files</button><input ref={inputRef} type="file" accept=".gpx,.xml,.fit,.fit.gz" multiple onChange={event => { if (event.target.files) void uploadFiles(event.target.files); event.target.value = ""; }} /></div></section>
             </>
           )}
         </div>

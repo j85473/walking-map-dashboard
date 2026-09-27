@@ -2,8 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { simplifyTrack } from "../src/lib/simplifyTrack.ts";
 import { validateWalk } from "../src/lib/walkValidation.ts";
+import { makeUploadBatches } from "../src/lib/uploadBatches.ts";
+import type { Walk } from "../src/lib/walkTypes.ts";
 
-const baseWalk = {
+const baseWalk: Walk = {
   id: "morning.gpx",
   name: "Morning walk",
   date: "2026-09-27T12:00:00.000Z",
@@ -73,4 +75,23 @@ test("heatmap counts walks once per street section and preserves off-network rou
   ], streets);
   assert.ok(heatmap.segments.every(segment => segment.visits === 2));
   assert.deepEqual(heatmap.unmatchedRoutes, [remote]);
+});
+
+test("upload batches honor both the walk count and UTF-8 request size", () => {
+  const items = Array.from({ length: 5 }, (_, fileIndex) => ({
+    fileIndex,
+    walk: { ...baseWalk, id: `walk-${fileIndex}`, name: `Walk ${fileIndex}` },
+  }));
+  const byCount = makeUploadBatches(items, 100_000, 2);
+  assert.deepEqual(byCount.batches.map(batch => batch.items.length), [2, 2, 1]);
+  assert.deepEqual(byCount.batches.flatMap(batch => JSON.parse(batch.body).map((walk: { id: string }) => walk.id)), items.map(item => item.walk.id));
+
+  const oneItemBytes = new TextEncoder().encode(JSON.stringify([items[0].walk])).byteLength;
+  const bySize = makeUploadBatches(items, oneItemBytes, 20);
+  assert.deepEqual(bySize.batches.map(batch => batch.items.length), [1, 1, 1, 1, 1]);
+  assert.ok(bySize.batches.every(batch => new TextEncoder().encode(batch.body).byteLength <= oneItemBytes));
+
+  const oversized = makeUploadBatches(items, oneItemBytes - 1, 20);
+  assert.equal(oversized.batches.length, 0);
+  assert.equal(oversized.oversized.length, items.length);
 });
