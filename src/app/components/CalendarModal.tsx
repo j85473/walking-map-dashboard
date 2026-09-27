@@ -75,19 +75,19 @@ export default function CalendarModal({ walks, onClose, onSelectDate }: Calendar
       >
         <div className="flex justify-between items-center mb-6">
           <h2 className="text-lg font-medium">Select Date</h2>
-          <button ref={closeButton} onClick={onClose} aria-label="Close calendar" className="text-gray-500 hover:text-gray-900 transition-colors">
+          <button ref={closeButton} onClick={onClose} aria-label="Close calendar" className="text-gray-300 hover:text-white transition-colors">
             <X size={20} />
           </button>
         </div>
 
         <div className="flex items-center justify-between mb-6">
-          <button onClick={prevMonth} aria-label="Previous month" className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg transition-colors">
+          <button onClick={prevMonth} aria-label="Previous month" className="p-2 text-gray-300 hover:bg-white/10 rounded-lg transition-colors">
             <ChevronLeft size={20} />
           </button>
           <div className="font-medium">
             {MONTHS[currentMonth.getMonth()]} {currentMonth.getFullYear()}
           </div>
-          <button onClick={nextMonth} aria-label="Next month" className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg transition-colors">
+          <button onClick={nextMonth} aria-label="Next month" className="p-2 text-gray-300 hover:bg-white/10 rounded-lg transition-colors">
             <ChevronRight size={20} />
           </button>
         </div>
@@ -111,8 +111,8 @@ export default function CalendarModal({ walks, onClose, onSelectDate }: Calendar
                 aria-label={`${MONTHS[currentMonth.getMonth()]} ${d}: ${walkCountsByDay.get(d) ?? 0} ${walkCountsByDay.get(d) === 1 ? 'walk' : 'walks'}`}
                 className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-all ${
                   hasWalks 
-                    ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-500 hover:text-white cursor-pointer ring-1 ring-emerald-300'
-                    : 'text-gray-400 cursor-default'
+                    ? 'bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500 hover:text-white cursor-pointer ring-1 ring-emerald-500/50'
+                    : 'text-gray-500 cursor-default'
                 }`}
               >
                 {d}
