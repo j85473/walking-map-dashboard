@@ -27,11 +27,12 @@ export default function Map({ walks, activeWalkId, opacities, viewRemaining, str
       zoomControl={false}
       preferCanvas={true}
     >
-      {/* Free dark mode tiles from CartoDB */}
+      {/* Key-free dark tiles with visible provider and OpenStreetMap attribution. */}
       <TileLayer
         className="map-tiles"
-        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
-        url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+        attribution='&copy; <a href="https://queeniemella.cc">queeniemella</a> | &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        url="https://basemap.queeniemella.cc/tiles/countries/{z}/{x}/{y}.png"
+        maxZoom={20}
       />
       
       {/* Traffic-Style Heatmap Layer OR Remaining Streets Layer */}
