@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import type { Walk } from '../page';
+import { useEffect, useRef, useState } from 'react';
+import type { Walk } from '@/lib/walkTypes';
 import { X, ChevronLeft, ChevronRight } from 'lucide-react';
 
 interface CalendarModalProps {
@@ -12,6 +12,15 @@ const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 export default function CalendarModal({ walks, onClose, onSelectDate }: CalendarModalProps) {
+  const closeButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    closeButton.current?.focus();
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [onClose]);
   // Start the calendar on the month of the most recent walk, or current month
   const [currentMonth, setCurrentMonth] = useState(() => {
     if (walks.length > 0) {
@@ -56,26 +65,29 @@ export default function CalendarModal({ walks, onClose, onSelectDate }: Calendar
   };
 
   return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
+    <div className="calendar-backdrop" onClick={onClose}>
       <div 
-        className="bg-[#1e2329] p-6 rounded-2xl w-full max-w-[360px] border border-white/5 shadow-2xl"
+        className="calendar-card"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Select a walk date"
         onClick={e => e.stopPropagation()} // Prevent clicks from closing modal
       >
         <div className="flex justify-between items-center mb-6">
-          <h2 className="text-white text-lg font-medium">Select Date</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors">
+          <h2 className="text-lg font-medium">Select Date</h2>
+          <button ref={closeButton} onClick={onClose} aria-label="Close calendar" className="text-gray-500 hover:text-gray-900 transition-colors">
             <X size={20} />
           </button>
         </div>
 
         <div className="flex items-center justify-between mb-6">
-          <button onClick={prevMonth} className="p-2 text-gray-400 hover:bg-white/5 rounded-lg hover:text-white transition-colors">
+          <button onClick={prevMonth} aria-label="Previous month" className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg transition-colors">
             <ChevronLeft size={20} />
           </button>
-          <div className="text-white font-medium">
+          <div className="font-medium">
             {MONTHS[currentMonth.getMonth()]} {currentMonth.getFullYear()}
           </div>
-          <button onClick={nextMonth} className="p-2 text-gray-400 hover:bg-white/5 rounded-lg hover:text-white transition-colors">
+          <button onClick={nextMonth} aria-label="Next month" className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg transition-colors">
             <ChevronRight size={20} />
           </button>
         </div>
@@ -96,10 +108,11 @@ export default function CalendarModal({ walks, onClose, onSelectDate }: Calendar
                 key={d}
                 onClick={() => handleDayClick(d)}
                 disabled={!hasWalks}
+                aria-label={`${MONTHS[currentMonth.getMonth()]} ${d}: ${walkCountsByDay.get(d) ?? 0} ${walkCountsByDay.get(d) === 1 ? 'walk' : 'walks'}`}
                 className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-all ${
                   hasWalks 
-                    ? 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500 hover:text-white cursor-pointer ring-1 ring-emerald-500/50' 
-                    : 'text-gray-600 cursor-default'
+                    ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-500 hover:text-white cursor-pointer ring-1 ring-emerald-300'
+                    : 'text-gray-400 cursor-default'
                 }`}
               >
                 {d}

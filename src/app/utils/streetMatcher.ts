@@ -1,4 +1,4 @@
-import { Walk } from '../page';
+import type { Walk } from '@/lib/walkTypes';
 
 export type StreetFeature = {
   type: 'Feature';
@@ -8,7 +8,7 @@ export type StreetFeature = {
     highway: string;
   };
   geometry: {
-    type: string;
+    type: 'LineString';
     coordinates: [number, number][]; // [lon, lat]
   };
 };

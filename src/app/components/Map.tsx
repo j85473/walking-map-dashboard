@@ -1,7 +1,7 @@
 "use client";
 
 import { MapContainer, TileLayer, ZoomControl, Polyline } from "react-leaflet";
-import { Walk, ColorOpacities } from '../page';
+import type { Walk, ColorOpacities } from '@/lib/walkTypes';
 import LineHeatmapLayer from "./LineHeatmapLayer";
 import RemainingStreetsLayer from "./RemainingStreetsLayer";
 import type { StridingResult } from "../utils/streetMatcher";
@@ -27,12 +27,12 @@ export default function Map({ walks, activeWalkId, opacities, viewRemaining, str
       zoomControl={false}
       preferCanvas={true}
     >
-      {/* Key-free dark tiles with visible provider and OpenStreetMap attribution. */}
+      {/* Full-coverage basemap keeps routes legible while panning. */}
       <TileLayer
         className="map-tiles"
-        attribution='&copy; <a href="https://queeniemella.cc">queeniemella</a> | &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-        url="https://basemap.queeniemella.cc/tiles/countries/{z}/{x}/{y}.png"
-        maxZoom={20}
+        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+        maxZoom={19}
       />
       
       {/* Traffic-Style Heatmap Layer OR Remaining Streets Layer */}

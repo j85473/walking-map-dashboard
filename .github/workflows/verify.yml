@@ -25,6 +25,7 @@ jobs:
       - run: npx prisma generate
       - run: bash -n scripts/deployment/*.sh
       - run: npm run lint
+      - run: npm test
       - run: npm run build
         env:
           DATABASE_URL: postgresql://invalid:invalid@127.0.0.1:1/career_db?schema=walking_map

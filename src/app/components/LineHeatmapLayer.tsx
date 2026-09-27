@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { useMap } from 'react-leaflet';
 import L from 'leaflet';
-import { Walk, ColorOpacities } from '../page';
+import type { Walk, ColorOpacities } from '@/lib/walkTypes';
 
 type LineHeatmapLayerProps = {
   walks: Walk[];
@@ -12,7 +12,7 @@ export default function LineHeatmapLayer({ walks, opacities }: LineHeatmapLayerP
   const map = useMap();
 
   useEffect(() => {
-    const canvas = L.DomUtil.create('canvas', 'leaflet-zoom-animated') as HTMLCanvasElement;
+    const canvas = L.DomUtil.create('canvas', 'leaflet-zoom-hide') as HTMLCanvasElement;
     canvas.style.pointerEvents = 'none';
     const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
     

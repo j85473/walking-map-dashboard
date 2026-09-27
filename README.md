@@ -10,7 +10,7 @@ I created this project to visualize urban walkability and gamify the experience 
 
 - **Activity Parsing**: Automatically parses and extracts GPS coordinates from `.gpx`, `.xml`, `.fit`, and compressed `.fit.gz` files (e.g., from Garmin or Strava exports).
 - **Interactive Heatmap**: Visualizes all logged walks on an interactive Leaflet map, featuring dynamic color intensity and opacity controls.
-- **Striding Progress**: Uses spatial grids and Haversine distance calculations to compare your GPS tracks against public downtown street GeoJSON data, calculating exact miles walked vs. miles remaining.
+- **Striding Progress**: Uses spatial grids and Haversine distance calculations to estimate downtown street mileage explored and remaining.
 - **Next Walk Generator**: Algorithmically generates novel walking routes (up to 9 waypoints) prioritizing unwalked streets, and exports directly to Google Maps navigation.
 - **Database Integration**: Synchronizes walk data, dates, distances, and step counts to a PostgreSQL database via Prisma ORM for persistent storage.
 
@@ -20,32 +20,33 @@ I created this project to visualize urban walkability and gamify the experience 
 ## Tech Stack
 
 - **Framework**: Next.js (App Router), React
-- **Map Rendering**: Leaflet, react-leaflet, leaflet.heat
+- **Map Rendering**: Leaflet, react-leaflet, canvas route overlay
 - **Data Processing**: GPXParser, fit-file-parser, pako
 - **Database**: PostgreSQL, Prisma ORM
 - **Styling**: Tailwind CSS, Lucide Icons
 
 ## Local development
 
-First, install dependencies and set up the database:
+Install dependencies and generate the Prisma client:
 ```bash
-npm install
+npm ci
 npx prisma generate
-npx prisma db push
 ```
 
-Then, run the development server:
+Set `DATABASE_URL` in an ignored `.env.local` file for a PostgreSQL database with the `walking_map` schema, then run:
 ```bash
 npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the dashboard.
 
+The server renders totals from a database aggregate. `/api/dashboard` computes street progress using full tracks, then sends five-meter-simplified routes to the map. The full points remain in PostgreSQL and can be exported through `/api/walks`. Snapshots are cached for five minutes and invalidated after an upload. `npm run lint`, `npm test`, and `npm run build` are the verification checks.
+
 ## M70 production
 
 The production URL is [http://100.107.116.123:3005](http://100.107.116.123:3005) on Joseph's Tailscale network. The application runs under its own `walking-dashboard` system account and uses the `walking_map` schema in M70's PostgreSQL database through a separate database login. Database credentials and GPS tracks stay on the M70, outside Git. The Pi deployment script and PM2 configuration have been retired.
 
-Pushes to `main` trigger the [Verify Walking Dashboard](.github/workflows/verify.yml) GitHub Actions workflow. The M70 checks GitHub every five minutes and activates the exact commit only after its lint and build checks succeed. It builds into a new release directory, switches the `/opt/walking-dashboard` symlink, checks `/api/health`, and restores the previous release if health fails. The timer and web app are supervised by systemd.
+Pushes to `main` trigger the [Verify Walking Dashboard](.github/workflows/verify.yml) GitHub Actions workflow. The M70 checks GitHub every five minutes and activates the exact commit only after its lint, test, and build checks succeed. It builds into a new release directory, switches the `/opt/walking-dashboard` symlink, checks `/api/health`, and restores the previous release if health fails. The timer and web app are supervised by systemd.
 
 The one-time host setup is `sudo bash scripts/deployment/bootstrap-m70.sh` from a checkout on the M70. It backs up the existing `walking_map` schema before enabling a new writer, creates a restricted database login, and installs the service and timer. It never runs `prisma db push` against the production database. The M70's walking records came from the September 2026 whole-database migration; compare them with the Pi before any future import if the Pi comes back online. Do not restore the Pi's copy over newer M70 walks.
 

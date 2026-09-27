@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Walk Dashboard | Minneapolis",
+  title: "Walk Atlas | Minneapolis",
   description: "Track your walking progress across downtown Minneapolis.",
 };
 
