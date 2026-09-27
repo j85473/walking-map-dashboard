@@ -2,13 +2,15 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { prisma } from "@/lib/prisma";
 import { simplifyTrack } from "@/lib/simplifyTrack";
+import { buildStreetHeatmap, type StreetHeatmap } from "@/lib/streetHeatmap";
 import type { Walk, WalkSummary } from "@/lib/walkTypes";
-import { processCityStriding, type StridingResult } from "@/app/utils/streetMatcher";
+import { processCityStriding, type StreetFeature, type StridingResult } from "@/app/utils/streetMatcher";
 
 export type DashboardSnapshot = {
   summary: WalkSummary;
   walks: Walk[];
   progress: StridingResult;
+  heatmap: StreetHeatmap;
 };
 
 type SnapshotCache = {
@@ -71,6 +73,7 @@ async function buildSnapshot(): Promise<DashboardSnapshot> {
   }));
   const streets = JSON.parse(await readFile(path.join(process.cwd(), "public/downtown-streets.geojson"), "utf8"));
   const progress = processCityStriding(rawWalks, streets);
+  const heatmap = buildStreetHeatmap(rawWalks, streets.features as StreetFeature[]);
   return {
     summary: {
       count: rawWalks.length,
@@ -80,6 +83,7 @@ async function buildSnapshot(): Promise<DashboardSnapshot> {
     },
     walks: rawWalks.map(walk => ({ ...walk, points: simplifyTrack(walk.points) })),
     progress,
+    heatmap,
   };
 }
 

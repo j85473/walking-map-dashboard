@@ -2,6 +2,7 @@
 
 import { MapContainer, TileLayer, ZoomControl, Polyline } from "react-leaflet";
 import type { Walk, ColorOpacities } from '@/lib/walkTypes';
+import type { StreetHeatmap } from '@/lib/streetHeatmap';
 import LineHeatmapLayer from "./LineHeatmapLayer";
 import RemainingStreetsLayer from "./RemainingStreetsLayer";
 import type { StridingResult } from "../utils/streetMatcher";
@@ -15,9 +16,10 @@ interface MapProps {
   opacities: ColorOpacities;
   viewRemaining: boolean;
   stridingResult: StridingResult | null;
+  heatmap: StreetHeatmap | null;
 }
 
-export default function Map({ walks, activeWalkId, opacities, viewRemaining, stridingResult }: MapProps) {
+export default function Map({ walks, activeWalkId, opacities, viewRemaining, stridingResult, heatmap }: MapProps) {
   const activeWalk = activeWalkId ? walks.find(w => w.id === activeWalkId) : null;
   return (
     <MapContainer 
@@ -36,7 +38,7 @@ export default function Map({ walks, activeWalkId, opacities, viewRemaining, str
       />
       
       {/* Traffic-Style Heatmap Layer OR Remaining Streets Layer */}
-      {!activeWalkId && !viewRemaining && <LineHeatmapLayer walks={walks} opacities={opacities} />}
+      {!activeWalkId && !viewRemaining && <LineHeatmapLayer walks={walks} heatmap={heatmap} opacities={opacities} />}
       {!activeWalkId && viewRemaining && <RemainingStreetsLayer stridingResult={stridingResult} />}
 
       {/* Selected Route Layer (Rendered on top) */}

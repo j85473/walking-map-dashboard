@@ -1,141 +1,146 @@
-import { useEffect } from 'react';
-import { useMap } from 'react-leaflet';
-import L from 'leaflet';
-import type { Walk, ColorOpacities } from '@/lib/walkTypes';
+import { useEffect } from "react";
+import { useMap } from "react-leaflet";
+import L from "leaflet";
+import type { Walk, ColorOpacities } from "@/lib/walkTypes";
+import type { StreetHeatmap, StreetHeatSegment } from "@/lib/streetHeatmap";
 
-type LineHeatmapLayerProps = {
+const colors = [
+  [55, 239, 170],  // green
+  [255, 218, 89],  // yellow
+  [255, 154, 72],  // orange
+  [255, 98, 93],   // red
+  [193, 137, 255], // purple
+] as const;
+const colorKeys = ["green", "yellow", "orange", "red", "purple"] as const;
+
+function colorBand(visits: number) {
+  if (visits <= 2) return 0;
+  if (visits <= 4) return 1;
+  if (visits <= 7) return 2;
+  if (visits <= 11) return 3;
+  return 4;
+}
+
+function opacity(intensity: number, density = 0) {
+  return Math.min(1, 0.2 + 0.075 * intensity + 0.18 * density);
+}
+
+export default function LineHeatmapLayer({ walks, heatmap, opacities }: {
   walks: Walk[];
+  heatmap: StreetHeatmap | null;
   opacities: ColorOpacities;
-};
-
-export default function LineHeatmapLayer({ walks, opacities }: LineHeatmapLayerProps) {
+}) {
   const map = useMap();
 
   useEffect(() => {
-    const canvas = L.DomUtil.create('canvas', 'leaflet-zoom-hide') as HTMLCanvasElement;
-    canvas.style.pointerEvents = 'none';
-    const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
-    
+    const canvas = L.DomUtil.create("canvas", "leaflet-zoom-hide") as HTMLCanvasElement;
+    canvas.style.pointerEvents = "none";
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return;
     map.getPanes().overlayPane.appendChild(canvas);
 
-    const gradientCanvas = document.createElement('canvas');
-    gradientCanvas.width = 1;
-    gradientCanvas.height = 256;
-    const gCtx = gradientCanvas.getContext('2d')!;
-    const gradient = gCtx.createLinearGradient(0, 0, 0, 256);
-    
-    gradient.addColorStop(0.0, 'rgba(0,0,0,0)');
-    gradient.addColorStop(0.2, '#10b981'); // Emerald Green
-    gradient.addColorStop(0.4, '#eab308'); // Yellow
-    gradient.addColorStop(0.6, '#f97316'); // Orange
-    gradient.addColorStop(0.8, '#ef4444'); // Red
-    gradient.addColorStop(1.0, '#a855f7'); // Purple
-    
-    gCtx.fillStyle = gradient;
-    gCtx.fillRect(0, 0, 1, 256);
-    const palette = gCtx.getImageData(0, 0, 1, 256).data;
+    let timeoutId: ReturnType<typeof setTimeout>;
+    let frameId = 0;
+    const fallbackRoutes = heatmap?.unmatchedRoutes ?? walks.map(walk => walk.points);
+    const streetSegments = heatmap?.segments ?? [];
 
-    // Precompute the multiplier map for fast opacity interpolation
-    const multiplierMap = new Float32Array(256);
-    for (let a = 0; a < 256; a++) {
-      const ratio = a / 255;
-      if (ratio <= 0.2) {
-        multiplierMap[a] = opacities.green;
-      } else if (ratio <= 0.4) {
-        const t = (ratio - 0.2) / 0.2;
-        multiplierMap[a] = opacities.green + t * (opacities.yellow - opacities.green);
-      } else if (ratio <= 0.6) {
-        const t = (ratio - 0.4) / 0.2;
-        multiplierMap[a] = opacities.yellow + t * (opacities.orange - opacities.yellow);
-      } else if (ratio <= 0.8) {
-        const t = (ratio - 0.6) / 0.2;
-        multiplierMap[a] = opacities.orange + t * (opacities.red - opacities.orange);
-      } else {
-        const t = (ratio - 0.8) / 0.2;
-        multiplierMap[a] = opacities.red + t * (opacities.purple - opacities.red);
+    const drawStreetSegments = (segments: StreetHeatSegment[], lineWidth: number) => {
+      if (!segments.length) return;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.beginPath();
+      for (const segment of segments) {
+        const start = map.latLngToContainerPoint(segment.start);
+        const end = map.latLngToContainerPoint(segment.end);
+        ctx.moveTo(start.x, start.y);
+        ctx.lineTo(end.x, end.y);
       }
-    }
+      ctx.globalAlpha = 0.76;
+      ctx.lineWidth = lineWidth + 2.4;
+      ctx.strokeStyle = "#06140f";
+      ctx.stroke();
 
-    let timeoutId: NodeJS.Timeout;
-    let animFrameId: number;
+      for (let band = 0; band < colors.length; band++) {
+        ctx.beginPath();
+        for (const segment of segments) {
+          if (colorBand(segment.visits) !== band) continue;
+          const start = map.latLngToContainerPoint(segment.start);
+          const end = map.latLngToContainerPoint(segment.end);
+          ctx.moveTo(start.x, start.y);
+          ctx.lineTo(end.x, end.y);
+        }
+        const [red, green, blue] = colors[band];
+        ctx.globalAlpha = opacity(opacities[colorKeys[band]]);
+        ctx.lineWidth = lineWidth;
+        ctx.strokeStyle = `rgb(${red}, ${green}, ${blue})`;
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+    };
 
     const redraw = () => {
       const size = map.getSize();
-      if (size.x === 0 || size.y === 0) {
+      if (!size.x || !size.y) {
         timeoutId = setTimeout(redraw, 50);
         return;
       }
-
       canvas.width = size.x;
       canvas.height = size.y;
       canvas.style.width = `${size.x}px`;
       canvas.style.height = `${size.y}px`;
+      L.DomUtil.setPosition(canvas, map.containerPointToLayerPoint([0, 0]));
+      const lineWidth = Math.min(7, Math.max(4.2, 4.2 + (map.getZoom() - 14) * 0.55));
+      ctx.lineWidth = lineWidth;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.strokeStyle = "rgba(0, 0, 0, 0.11)";
 
-      const topLeft = map.containerPointToLayerPoint([0, 0]);
-      L.DomUtil.setPosition(canvas, topLeft);
-
-      ctx.clearRect(0, 0, size.x, size.y);
-
-      ctx.lineWidth = 4;
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
-      ctx.strokeStyle = 'rgba(0, 0, 0, 0.08)';
-
-      for (const walk of walks) {
-        if (!walk.points || walk.points.length === 0) continue;
-        
+      for (const points of fallbackRoutes) {
+        if (points.length < 2) continue;
         ctx.beginPath();
-        const pts = walk.points;
-        for (let i = 0; i < pts.length; i++) {
-          const p = map.latLngToContainerPoint([pts[i][0], pts[i][1]]);
-          if (i === 0) {
-            ctx.moveTo(p.x, p.y);
-          } else {
-            ctx.lineTo(p.x, p.y);
-          }
+        for (let i = 0; i < points.length; i++) {
+          const pixel = map.latLngToContainerPoint(points[i]);
+          if (i === 0) ctx.moveTo(pixel.x, pixel.y);
+          else ctx.lineTo(pixel.x, pixel.y);
         }
         ctx.stroke();
       }
 
-      const imgData = ctx.getImageData(0, 0, size.x, size.y);
-      const data = imgData.data;
-      
-      for (let i = 3, len = data.length; i < len; i += 4) {
-        const alpha = data[i];
-        if (alpha > 0) {
-          const offset = alpha * 4;
-          data[i - 3] = palette[offset];     // R
-          data[i - 2] = palette[offset + 1]; // G
-          data[i - 1] = palette[offset + 2]; // B
-          data[i] = Math.min(255, alpha * multiplierMap[alpha]); 
+      if (fallbackRoutes.length) {
+        const image = ctx.getImageData(0, 0, size.x, size.y);
+        const data = image.data;
+        for (let i = 3; i < data.length; i += 4) {
+          const alpha = data[i];
+          if (!alpha) continue;
+          const band = alpha < 55 ? 0 : alpha < 103 ? 1 : alpha < 151 ? 2 : alpha < 204 ? 3 : 4;
+          const [red, green, blue] = colors[band];
+          data[i - 3] = red;
+          data[i - 2] = green;
+          data[i - 1] = blue;
+          data[i] = Math.round(255 * opacity(opacities[colorKeys[band]], alpha / 255));
         }
+        ctx.putImageData(image, 0, 0);
       }
-      
-      ctx.putImageData(imgData, 0, 0);
+      drawStreetSegments(streetSegments, lineWidth);
     };
 
     const scheduleRedraw = () => {
-      cancelAnimationFrame(animFrameId);
-      animFrameId = requestAnimationFrame(redraw);
+      cancelAnimationFrame(frameId);
+      frameId = requestAnimationFrame(redraw);
     };
-
-    map.on('moveend', scheduleRedraw);
-    map.on('resize', scheduleRedraw);
-    map.on('zoomend', scheduleRedraw);
-    
+    map.on("moveend", scheduleRedraw);
+    map.on("resize", scheduleRedraw);
+    map.on("zoomend", scheduleRedraw);
     scheduleRedraw();
-
     return () => {
       clearTimeout(timeoutId);
-      cancelAnimationFrame(animFrameId);
-      map.off('moveend', scheduleRedraw);
-      map.off('resize', scheduleRedraw);
-      map.off('zoomend', scheduleRedraw);
-      if (canvas.parentNode) {
-        canvas.parentNode.removeChild(canvas);
-      }
+      cancelAnimationFrame(frameId);
+      map.off("moveend", scheduleRedraw);
+      map.off("resize", scheduleRedraw);
+      map.off("zoomend", scheduleRedraw);
+      canvas.remove();
     };
-  }, [map, walks, opacities]);
+  }, [map, walks, heatmap, opacities]);
 
   return null;
 }

@@ -190,7 +190,7 @@ export default function DashboardClient({ initialSummary }: { initialSummary: Wa
         <div className="panel-footer"><span><Check size={13} /> Walks saved to your dashboard</span><button onClick={() => setIsCalendarOpen(true)} disabled={!walks.length}><CalendarDays size={17} /> Calendar</button></div>
       </aside>
       <section className="map-stage" aria-label="Walking map">
-        <Map walks={mapWalks} activeWalkId={activeWalkId} opacities={opacities} viewRemaining={viewRemaining} stridingResult={progress ?? null} />
+        <Map walks={mapWalks} activeWalkId={activeWalkId} opacities={opacities} viewRemaining={viewRemaining} stridingResult={progress ?? null} heatmap={selectedDate ? null : snapshot?.heatmap ?? null} />
         <div className="map-topbar"><span className="map-location"><span className="map-location-dot" /> Minneapolis, MN</span><button onClick={() => void loadSnapshot()} aria-label="Refresh dashboard" disabled={status === "loading"}><RotateCw size={16} /> Refresh</button></div>
         {status === "loading" && <div className="map-loading" role="status"><span className="loading-spinner" /><strong>Drawing your map</strong><span>Your walking totals are ready. Routes are loading.</span></div>}
         {status === "error" && !snapshot && <div className="map-loading"><strong>Map unavailable</strong><span>Check the connection and try again.</span><button onClick={() => void loadSnapshot()}>Retry loading</button></div>}
