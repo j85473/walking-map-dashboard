@@ -47,7 +47,7 @@ export default function Map({ walks, activeWalkId, opacities, viewRemaining, str
           key={activeWalk.id} 
           positions={activeWalk.points} 
           pathOptions={{ 
-            color: '#8ec5ff', // Selected walk highlight
+            color: '#22d3ee', // Selected walk highlight
             weight: 6,
             opacity: 1.0, 
             lineCap: 'round',

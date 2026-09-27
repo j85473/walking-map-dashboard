@@ -9,7 +9,7 @@ I created this project to visualize urban walkability and gamify the experience 
 ## Features
 
 - **Activity Parsing**: Automatically parses and extracts GPS coordinates from `.gpx`, `.xml`, `.fit`, and compressed `.fit.gz` files (e.g., from Garmin or Strava exports).
-- **Interactive Heatmap**: Visualizes all logged walks on an interactive Leaflet map, with a blue-to-purple intensity scale and street-aligned lines in the mapped downtown area.
+- **Interactive Heatmap**: Visualizes all logged walks on an interactive Leaflet map, with green-to-purple intensity controls and street-aligned lines in the mapped downtown area.
 - **Striding Progress**: Uses spatial grids and Haversine distance calculations to estimate downtown street mileage explored and remaining.
 - **Next Walk Generator**: Algorithmically generates novel walking routes (up to 9 waypoints) prioritizing unwalked streets, and exports directly to Google Maps navigation.
 - **Database Integration**: Synchronizes walk data, dates, distances, and step counts to a PostgreSQL database via Prisma ORM for persistent storage.

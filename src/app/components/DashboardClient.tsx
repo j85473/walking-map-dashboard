@@ -11,14 +11,14 @@ import { makeUploadBatches, type UploadBatch, type UploadItem } from "@/lib/uplo
 import { generateWalkUrl } from "../utils/routeGenerator";
 
 const Map = dynamic(() => import("./Map"), { ssr: false });
-const initialOpacities: ColorOpacities = { blue: 6, cyan: 2.5, amber: 2.5, red: 2.5, purple: 2.5 };
+const initialOpacities: ColorOpacities = { green: 6, yellow: 2.5, orange: 2.5, red: 2.5, purple: 2.5 };
 const noWalks: DashboardSnapshot["walks"] = [];
 const colorSettings = [
-  { key: "blue", label: "Blue", color: "#4d9fff" },
-  { key: "cyan", label: "Cyan", color: "#69d9ff" },
-  { key: "amber", label: "Amber", color: "#f5a623" },
-  { key: "red", label: "Red", color: "#f05b5b" },
-  { key: "purple", label: "Purple", color: "#be85ff" },
+  { key: "green", label: "Green", color: "#30d3a0" },
+  { key: "yellow", label: "Yellow", color: "#f5c766" },
+  { key: "orange", label: "Orange", color: "#ff9b5e" },
+  { key: "red", label: "Red", color: "#ff706c" },
+  { key: "purple", label: "Purple", color: "#b48dff" },
 ] as const;
 
 function dateKey(value: string) {
