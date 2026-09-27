@@ -40,6 +40,8 @@ if [[ ! -d $releases/$revision ]]; then
   chown -R walking-dashboard:walking-dashboard "$staging"
   runuser -u walking-dashboard -- bash -c '
     set -euo pipefail
+    export HOME=/var/lib/walking-dashboard/home
+    export NPM_CONFIG_CACHE=$HOME/.npm
     cd "$1"
     npm ci --no-audit --no-fund
     npx prisma generate

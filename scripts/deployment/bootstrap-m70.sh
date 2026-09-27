@@ -10,6 +10,9 @@ if ! id walking-dashboard >/dev/null 2>&1; then
 fi
 chown root:walking-dashboard /etc/walking-dashboard
 chmod 750 /etc/walking-dashboard
+chown root:walking-dashboard /var/lib/walking-dashboard
+chmod 750 /var/lib/walking-dashboard
+install -d -o walking-dashboard -g walking-dashboard -m 700 /var/lib/walking-dashboard/home
 install -d -o root -g walking-dashboard -m 750 /opt/walking-dashboard-releases
 
 count=$(runuser -u postgres -- psql -d career_db -X -A -t -v ON_ERROR_STOP=1 \

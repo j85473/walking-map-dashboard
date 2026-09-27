@@ -23,6 +23,7 @@ jobs:
           cache: npm
       - run: npm ci --no-audit --no-fund
       - run: npx prisma generate
+      - run: bash -n scripts/deployment/*.sh
       - run: npm run lint
       - run: npm run build
         env:
