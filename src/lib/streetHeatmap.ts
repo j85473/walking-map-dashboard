@@ -1,6 +1,9 @@
 import type { Walk } from "./walkTypes";
-import type { StreetFeature } from "../app/utils/streetMatcher";
+import type { FeatureCollection } from "geojson";
+import type { StreetFeature, StridingResult } from "../app/utils/streetMatcher";
 import { simplifyTrack } from "./simplifyTrack.ts";
+import { isWalkableStreet } from "./walkableStreets.ts";
+import { distanceMiles, edgeKey } from "../app/utils/streetGraph.ts";
 
 type Point = [number, number]; // latitude, longitude
 export type StreetHeatSegment = { start: Point; end: Point; visits: number };
@@ -19,6 +22,9 @@ type IndexedSegment = {
   lengthSquared: number;
   bins: number;
   offset: number;
+  feature: StreetFeature;
+  completion: boolean;
+  miles: number;
 };
 
 const LATITUDE_SCALE = 111_132;
@@ -45,21 +51,60 @@ function band(visits: number) {
 }
 
 function interpolate(segment: IndexedSegment, fraction: number): Point {
+  if (fraction === 0) return segment.start;
+  if (fraction === 1) return segment.end;
   return [
     segment.start[0] + (segment.end[0] - segment.start[0]) * fraction,
     segment.start[1] + (segment.end[1] - segment.start[1]) * fraction,
   ];
 }
 
-/** Match each GPS sample to the nearest mapped street, without changing stored GPS. */
-export function buildStreetHeatmap(walks: Walk[], features: StreetFeature[]): StreetHeatmap {
+function binCount(a: Point, b: Point) {
+  const [ax, ay] = toXY(a), [bx, by] = toXY(b);
+  return Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) / BIN_METERS));
+}
+
+/** Give the planner exactly the same small edges used for coverage credit. */
+export function buildCoverageRoutingNetwork(network: FeatureCollection): FeatureCollection {
+  return { ...network, features: network.features.flatMap(feature => {
+    if (feature.geometry?.type !== "LineString" || !isWalkableStreet(feature)) return [];
+    const coordinates: [number, number][] = [];
+    const original = feature.geometry.coordinates;
+    for (let index = 1; index < original.length; index++) {
+      const a = original[index - 1], b = original[index];
+      const bins = binCount([a[1], a[0]], [b[1], b[0]]);
+      if (!coordinates.length) coordinates.push([a[0], a[1]]);
+      for (let bin = 1; bin <= bins; bin++) {
+        const fraction = bin / bins;
+        coordinates.push(bin === bins ? [b[0], b[1]] : [a[0] + (b[0] - a[0]) * fraction, a[1] + (b[1] - a[1]) * fraction]);
+      }
+    }
+    return coordinates.length < 2 ? [] : [{ ...feature, geometry: { type: "LineString" as const, coordinates } }];
+  }) };
+}
+
+/** One GPS match pass supplies both the colored footprint and its unwalked
+ * complement. Completion is limited to the supplied downtown street edges;
+ * history outside that area remains visible without earning downtown credit.
+ */
+export function buildStreetCoverage(walks: Walk[], features: StreetFeature[], completionFeatures: StreetFeature[] = features): {
+  heatmap: StreetHeatmap;
+  progress: StridingResult;
+} {
   const segments: IndexedSegment[] = [];
   const index = new Map<string, number[]>();
+  const completionEdges = new Set<string>();
+  for (const feature of completionFeatures) {
+    if (feature.geometry?.type !== "LineString" || !isWalkableStreet(feature)) continue;
+    const coordinates = feature.geometry.coordinates;
+    for (let point = 1; point < coordinates.length; point++) completionEdges.add(edgeKey(coordinates[point - 1], coordinates[point]));
+  }
+  const seenEdges = new Set<string>();
   let totalBins = 0;
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
 
   for (const feature of features) {
-    if (feature.geometry?.type !== "LineString") continue;
+    if (feature.geometry?.type !== "LineString" || !isWalkableStreet(feature)) continue;
     const coordinates = feature.geometry.coordinates;
     for (let i = 0; i < coordinates.length - 1; i++) {
       const start: Point = [coordinates[i][1], coordinates[i][0]];
@@ -69,9 +114,13 @@ export function buildStreetHeatmap(walks: Walk[], features: StreetFeature[]): St
       const dx = x2 - x1, dy = y2 - y1;
       const lengthSquared = dx * dx + dy * dy;
       if (lengthSquared < 0.01) continue;
-      const bins = Math.max(1, Math.ceil(Math.sqrt(lengthSquared) / BIN_METERS));
+      const key = edgeKey(coordinates[i], coordinates[i + 1]);
+      if (seenEdges.has(key)) continue;
+      seenEdges.add(key);
+      const bins = binCount(start, end);
       const segmentIndex = segments.length;
-      segments.push({ start, end, x1, y1, dx, dy, lengthSquared, bins, offset: totalBins });
+      segments.push({ start, end, x1, y1, dx, dy, lengthSquared, bins, offset: totalBins,
+        feature, completion: completionEdges.has(key), miles: distanceMiles(coordinates[i], coordinates[i + 1]) });
       totalBins += bins;
       minX = Math.min(minX, x1, x2);
       minY = Math.min(minY, y1, y2);
@@ -160,7 +209,34 @@ export function buildStreetHeatmap(walks: Walk[], features: StreetFeature[]): St
   }
 
   const heatSegments: StreetHeatSegment[] = [];
+  const unwalkedFeatures: StreetFeature[] = [];
+  let totalMiles = 0, walkedMiles = 0;
+  let activeFeature: StreetFeature | undefined;
+  let unwalked: [number, number][] = [];
+  const flushUnwalked = () => {
+    if (activeFeature && unwalked.length >= 2) unwalkedFeatures.push({
+      type: "Feature", properties: { ...activeFeature.properties },
+      geometry: { type: "LineString", coordinates: unwalked },
+    });
+    unwalked = [];
+  };
   for (const segment of segments) {
+    if (activeFeature !== segment.feature) { flushUnwalked(); activeFeature = segment.feature; }
+    const previousEnd = unwalked.at(-1);
+    if (previousEnd && (previousEnd[0] !== segment.start[1] || previousEnd[1] !== segment.start[0])) flushUnwalked();
+    if (segment.completion) {
+      totalMiles += segment.miles;
+      for (let bin = 0; bin < segment.bins; bin++) {
+        if (visits[segment.offset + bin]) {
+          walkedMiles += segment.miles / segment.bins;
+          flushUnwalked();
+        } else {
+          const start = interpolate(segment, bin / segment.bins), end = interpolate(segment, (bin + 1) / segment.bins);
+          if (!unwalked.length) unwalked.push([start[1], start[0]]);
+          unwalked.push([end[1], end[0]]);
+        }
+      }
+    } else flushUnwalked();
     let startBin = 0;
     while (startBin < segment.bins) {
       const count = visits[segment.offset + startBin];
@@ -181,5 +257,17 @@ export function buildStreetHeatmap(walks: Walk[], features: StreetFeature[]): St
       startBin = endBin;
     }
   }
-  return { segments: heatSegments, unmatchedRoutes };
+  flushUnwalked();
+  return {
+    heatmap: { segments: heatSegments, unmatchedRoutes },
+    progress: {
+      totalMiles: Number(totalMiles.toFixed(2)), walkedMiles: Number(walkedMiles.toFixed(2)),
+      remainingMiles: Number(Math.max(0, totalMiles - walkedMiles).toFixed(2)),
+      unwalkedGeoJSON: { type: "FeatureCollection", features: unwalkedFeatures },
+    },
+  };
+}
+
+export function buildStreetHeatmap(walks: Walk[], features: StreetFeature[]): StreetHeatmap {
+  return buildStreetCoverage(walks, features).heatmap;
 }

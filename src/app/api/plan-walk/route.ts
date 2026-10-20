@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getDashboardSnapshot, getStreetNetwork } from "@/lib/dashboardData";
 import { generateWalkPlan, googleMapsWaypointLimit } from "@/app/utils/routeGenerator";
 import { splitDowntownStreetNetwork } from "@/lib/downtownBoundary";
+import { buildCoverageRoutingNetwork } from "@/lib/streetHeatmap";
 
 export async function POST(request: Request) {
   let maxWaypoints = googleMapsWaypointLimit(request.headers.get("user-agent") ?? "");
@@ -17,7 +18,7 @@ export async function POST(request: Request) {
   try {
     const [snapshot, streetNetwork] = await Promise.all([getDashboardSnapshot(), getStreetNetwork()]);
     const { routingNetwork } = splitDowntownStreetNetwork(streetNetwork);
-    const plan = generateWalkPlan(snapshot.progress.unwalkedGeoJSON, { maxWaypoints, streetNetwork: routingNetwork });
+    const plan = generateWalkPlan(snapshot.progress.unwalkedGeoJSON, { maxWaypoints, streetNetwork: buildCoverageRoutingNetwork(routingNetwork) });
     return NextResponse.json({ plan }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     console.error("Unable to plan a walk", error);
