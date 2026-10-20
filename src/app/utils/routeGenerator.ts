@@ -5,8 +5,9 @@ type Coordinate = [number, number]; // longitude, latitude
 
 export const WALK_HOME = {
   address: "2121 Garfield Ave S, Minneapolis, MN",
-  // Used for distance estimates only; Google Maps resolves the actual address.
-  coordinates: [-93.2858, 44.9609] as Coordinate,
+  // Resolved by Google Maps for the confirmed address. Directions still use
+  // the address so the same home appears as both the origin and destination.
+  coordinates: [-93.2864753, 44.9613767] as Coordinate,
 };
 
 export type WalkSection = {
@@ -16,8 +17,10 @@ export type WalkSection = {
 };
 
 export type WalkPlan = {
-  url: string | null;
-  mobileUrls: string[];
+  url: string;
+  // Already-open dashboard tabs use the first entry. It must also contain the
+  // whole loop, never a partial trip ending away from home.
+  mobileUrls: [string];
   waypoints: Coordinate[];
   sections: WalkSection[];
   novelMiles: number;
@@ -38,6 +41,12 @@ type SearchState = {
   miles: number;
   score: number;
 };
+
+export function googleMapsWaypointLimit(userAgent: string, maxTouchPoints = 0): 3 | 9 {
+  const mobileBrowser = /Android|iPhone|iPad|iPod/i.test(userAgent) ||
+    (/Macintosh/i.test(userAgent) && maxTouchPoints > 1);
+  return mobileBrowser ? 3 : 9;
+}
 
 function distance(a: Coordinate, b: Coordinate) {
   const radians = Math.PI / 180;
@@ -127,8 +136,10 @@ export function generateWalkPlan(
   options: { maxMiles?: number; maxWaypoints?: number } = {},
 ): WalkPlan | null {
   const maxMiles = options.maxMiles ?? 7;
-  const requestedWaypoints = options.maxWaypoints ?? 32;
-  const maxWaypoints = Math.min(32, Math.floor(requestedWaypoints));
+  const requestedWaypoints = options.maxWaypoints ?? 9;
+  // A plan must fit in one Google Maps route, including the return home.
+  // Mobile browsers use a smaller budget, supplied by the client.
+  const maxWaypoints = Math.min(9, Math.floor(requestedWaypoints));
   if (!Number.isFinite(maxMiles) || maxMiles <= 0 || !Number.isFinite(requestedWaypoints) || maxWaypoints < 2 ||
       !unwalkedGeoJSON || !Array.isArray(unwalkedGeoJSON.features)) return null;
   const candidates = candidatesFrom(unwalkedGeoJSON);
@@ -176,17 +187,10 @@ export function generateWalkPlan(
   if (!best.visits.length) return null;
 
   const waypointStrings = best.pins.map(([lon, lat]) => `${lat},${lon}`);
-  const stops = [WALK_HOME.address, ...waypointStrings, WALK_HOME.address];
-  const mobileUrls: string[] = [];
-  // Google Maps supports 3 intermediate stops in mobile browsers, 9 elsewhere.
-  // Each part ends where the next starts; the final part always ends at home.
-  for (let index = 0; index < stops.length - 1; index += 4) {
-    const end = Math.min(index + 4, stops.length - 1);
-    mobileUrls.push(directions(stops[index], stops[end], stops.slice(index + 1, end)));
-  }
+  const url = directions(WALK_HOME.address, WALK_HOME.address, waypointStrings);
   return {
-    url: waypointStrings.length <= 9 ? directions(WALK_HOME.address, WALK_HOME.address, waypointStrings) : null,
-    mobileUrls,
+    url,
+    mobileUrls: [url],
     waypoints: best.pins,
     sections: best.visits.map(({ section, reverse }) => ({
       name: section.name,
@@ -199,5 +203,5 @@ export function generateWalkPlan(
 }
 
 export function generateWalkUrl(unwalkedGeoJSON: FeatureCollection): string | null {
-  return generateWalkPlan(unwalkedGeoJSON, { maxWaypoints: 9 })?.url ?? null;
+  return generateWalkPlan(unwalkedGeoJSON)?.url ?? null;
 }

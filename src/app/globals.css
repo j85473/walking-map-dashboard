@@ -57,8 +57,7 @@ button:focus-visible,input:focus-visible { outline:3px solid #74afff; outline-of
 .walk-plan-stats { display:flex; flex-wrap:wrap; gap:5px 14px; color:#83e8ed; font-weight:750; }
 .walk-plan ol { padding-left:20px; margin:7px 0 12px; color:#d3e3fa; }
 .walk-plan a { color:#b0d3ff; text-decoration:underline; text-underline-offset:3px; }
-.walk-plan-link,.walk-plan-parts a { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 0; }
-.walk-plan-parts { margin-top:9px; padding-top:5px; border-top:1px solid #34486b; }
+.walk-plan-link { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 0; }
 .walk-plan summary { cursor:pointer; padding:6px 0; color:#d3e3fa; }
 .walk-plan-targets { margin-top:6px; }
 .walk-plan .walk-plan-note { font-size:11px; color:#a7b9d6; }

@@ -8,7 +8,7 @@ import type { DashboardSnapshot } from "@/lib/dashboardData";
 import type { ColorOpacities, WalkSummary } from "@/lib/walkTypes";
 import { parseWalkFile } from "@/lib/parseWalkFile";
 import { makeUploadBatches, type UploadBatch, type UploadItem } from "@/lib/uploadBatches";
-import { WALK_HOME, type WalkPlan } from "../utils/routeGenerator";
+import { googleMapsWaypointLimit, WALK_HOME, type WalkPlan } from "../utils/routeGenerator";
 
 const Map = dynamic(() => import("./Map"), { ssr: false });
 const initialOpacities: ColorOpacities = { green: 6, yellow: 2.5, orange: 2.5, red: 2.5, purple: 2.5 };
@@ -185,7 +185,12 @@ export default function DashboardClient({ initialSummary }: { initialSummary: Wa
     setMessage(null);
     setWalkPlan(null);
     try {
-      const response = await fetch("/api/plan-walk", { method: "POST", signal: AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]) });
+      const response = await fetch("/api/plan-walk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ maxWaypoints: googleMapsWaypointLimit(navigator.userAgent, navigator.maxTouchPoints) }),
+        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]),
+      });
       if (!response.ok) throw new Error(`Walk planning failed (${response.status}). Please try again.`);
       const { plan } = await response.json() as { plan: WalkPlan | null };
       if (controller.signal.aborted) return;
@@ -240,10 +245,8 @@ export default function DashboardClient({ initialSummary }: { initialSummary: Wa
                   <p>{WALK_HOME.address}</p>
                   <div className="walk-plan-stats"><span>About {walkPlan.estimatedMiles.toFixed(1)} mi total</span><span>{walkPlan.novelMiles.toFixed(2)} new mi targeted</span></div>
                   <details className="walk-plan-targets"><summary>{walkPlan.sections.length} unfinished section{walkPlan.sections.length === 1 ? "" : "s"} to walk end to end</summary><ol>{walkPlan.sections.map((section, index) => <li key={index}>{section.name}</li>)}</ol></details>
-                  <a className="walk-plan-link" href={walkPlan.mobileUrls[0]} target="_blank" rel="noopener noreferrer">Start walk in Google Maps <ArrowUpRight size={14} /></a>
-                  {walkPlan.url && walkPlan.mobileUrls.length > 1 && <a className="walk-plan-link" href={walkPlan.url} target="_blank" rel="noopener noreferrer">Full route for desktop <ArrowUpRight size={14} /></a>}
-                  {walkPlan.mobileUrls.length > 1 && <details className="walk-plan-parts"><summary>Walking directions · {walkPlan.mobileUrls.length} parts</summary><p>Follow these parts in order. The last part brings you home.</p>{walkPlan.mobileUrls.map((url, index) => <a key={index} href={url} target="_blank" rel="noopener noreferrer">Part {index + 1}{index === 0 ? " · leave home" : index === walkPlan.mobileUrls.length - 1 ? " · return home" : ""}<ArrowUpRight size={13} /></a>)}</details>}
-                  <p className="walk-plan-note">Distance is estimated. Check the walking route in Maps before heading out; Maps chooses the paths between stops.</p>
+                  <a className="walk-plan-link" href={walkPlan.url} target="_blank" rel="noopener noreferrer">Open whole walk in Google Maps <ArrowUpRight size={14} /></a>
+                  <p className="walk-plan-note">One continuous route, including the return home. Distance is estimated; Maps chooses the walking paths between stops.</p>
                   <button className="text-action" onClick={() => setWalkPlan(null)}>Clear plan</button>
                 </div>}
               </section>

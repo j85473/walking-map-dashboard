@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { FeatureCollection, Feature, LineString } from "geojson";
-import { generateWalkPlan, generateWalkUrl, WALK_HOME } from "../src/app/utils/routeGenerator.ts";
+import { generateWalkPlan, generateWalkUrl, googleMapsWaypointLimit, WALK_HOME } from "../src/app/utils/routeGenerator.ts";
 
 type Coordinate = [number, number];
 const point = (east: number, north: number): Coordinate => [WALK_HOME.coordinates[0] + east, WALK_HOME.coordinates[1] + north];
@@ -103,42 +103,50 @@ test("repeated GPS points at a section boundary preserve the full target without
   assert.equal(JSON.stringify(repeatedData), before);
 });
 
-test("phone directions preserve every stop in order and end at home", () => {
+test("the primary directions link contains the entire advertised walk and return home", () => {
   const plan = generateWalkPlan(collection(...Array.from({ length: 4 }, (_, index) =>
     road(`Road ${index}`, [point(index * 0.003, 0.001), point(index * 0.003 + 0.001, 0.001)]),
   )))!;
   assert.equal(plan.sections.length, 4);
   assert.ok(plan.waypoints.length <= 9);
-  assert.ok(plan.mobileUrls.length > 1);
   assert.ok(plan.url);
-  const assembled: string[] = [];
-  for (const url of plan.mobileUrls) {
-    const part = stops(url);
-    assert.ok(part.length <= 5, "at most 3 intermediate stops per mobile link");
-    assert.equal(new URL(url).searchParams.get("travelmode"), "walking");
-    if (!assembled.length) assembled.push(...part);
-    else {
-      assert.equal(part[0], assembled.at(-1), "parts connect without gaps");
-      assembled.push(...part.slice(1));
-    }
-  }
-  assert.deepEqual(assembled, stops(plan.url));
-  assert.equal(assembled[0], WALK_HOME.address);
-  assert.equal(assembled.at(-1), WALK_HOME.address);
+  assert.equal(new URL(plan.url).searchParams.get("travelmode"), "walking");
+  assert.deepEqual(stops(plan.url), [WALK_HOME.address, ...plan.waypoints.map(location), WALK_HOME.address]);
+  assert.deepEqual(plan.mobileUrls, [plan.url], "the action in already-open tabs must also open the whole loop");
 });
 
-test("longer loops use consecutive parts instead of dropping stops at Google's full-link limit", () => {
+test("the planner selects fewer targets when necessary to keep the whole walk in one link", () => {
   const data = collection(...Array.from({ length: 6 }, (_, index) =>
     road(`Road ${index}`, [point(index * 0.003, 0.001), point(index * 0.003 + 0.001, 0.001)]),
   ));
   const plan = generateWalkPlan(data)!;
-  assert.equal(plan.sections.length, 6);
-  assert.ok(plan.waypoints.length > 9);
-  assert.equal(plan.url, null);
-  const assembled = plan.mobileUrls.flatMap((url, index) => stops(url).slice(index ? 1 : 0));
-  assert.deepEqual(assembled, [WALK_HOME.address, ...plan.waypoints.map(location), WALK_HOME.address]);
-  const singleLink = generateWalkUrl(data)!;
-  assert.ok(stops(singleLink).length <= 11, "legacy single-link callers stay within 9 intermediate stops");
+  assert.ok(plan.sections.length < data.features.length);
+  assert.ok(plan.waypoints.length <= 9);
+  assert.deepEqual(stops(plan.url), [WALK_HOME.address, ...plan.waypoints.map(location), WALK_HOME.address]);
+  assert.deepEqual(generateWalkPlan(data, { maxWaypoints: 32 }), plan, "oversized budgets cannot produce a partial main link");
+  for (const section of plan.sections) {
+    assert.ok(stops(plan.url).includes(location(section.coordinates[0])));
+    assert.ok(stops(plan.url).includes(location(section.coordinates.at(-1)!)));
+  }
+});
+
+test("mobile browser plans fit three intermediate stops and keep home as the final destination", () => {
+  const data = collection(...Array.from({ length: 6 }, (_, index) =>
+    road(`Road ${index}`, [point(index * 0.003, 0.001), point(index * 0.003 + 0.001, 0.001)]),
+  ));
+  const plan = generateWalkPlan(data, { maxWaypoints: 3 })!;
+  assert.ok(plan.sections.length > 0);
+  assert.ok(plan.waypoints.length <= 3);
+  assert.deepEqual(stops(plan.url), [WALK_HOME.address, ...plan.waypoints.map(location), WALK_HOME.address]);
+  assert.deepEqual(plan.mobileUrls, [plan.url]);
+});
+
+test("desktop and mobile browser budgets reflect Google's single-route limits", () => {
+  assert.equal(googleMapsWaypointLimit("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Version/18.0 Safari/605.1.15"), 9);
+  assert.equal(googleMapsWaypointLimit("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Mobile Safari"), 3);
+  assert.equal(googleMapsWaypointLimit("Mozilla/5.0 (Linux; Android 15) Chrome Mobile"), 3);
+  assert.equal(googleMapsWaypointLimit("Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X)"), 3);
+  assert.equal(googleMapsWaypointLimit("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Safari", 5), 3);
 });
 
 test("empty, degenerate, invalid, or non-street geometry cannot produce a walk", () => {
