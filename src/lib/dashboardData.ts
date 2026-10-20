@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import type { FeatureCollection } from "geojson";
 import { prisma } from "@/lib/prisma";
 import { simplifyTrack } from "@/lib/simplifyTrack";
 import { buildStreetHeatmap, type StreetHeatmap } from "@/lib/streetHeatmap";
@@ -23,6 +24,14 @@ type SnapshotCache = {
 
 const shared = globalThis as typeof globalThis & { walkingSnapshotCache?: SnapshotCache };
 const cache = shared.walkingSnapshotCache ??= { validUntil: 0, generation: 0 };
+let streetNetwork: Promise<FeatureCollection> | undefined;
+
+export function getStreetNetwork(): Promise<FeatureCollection> {
+  streetNetwork ??= readFile(path.join(process.cwd(), "public/downtown-streets.geojson"), "utf8")
+    .then(text => JSON.parse(text) as FeatureCollection)
+    .catch(error => { streetNetwork = undefined; throw error; });
+  return streetNetwork;
+}
 
 function parseStoredPoints(value: unknown): [number, number][] {
   let raw = value;
@@ -71,7 +80,7 @@ async function buildSnapshot(): Promise<DashboardSnapshot> {
     steps: row.steps,
     points: parseStoredPoints(row.track),
   }));
-  const streets = JSON.parse(await readFile(path.join(process.cwd(), "public/downtown-streets.geojson"), "utf8"));
+  const streets = await getStreetNetwork();
   const progress = processCityStriding(rawWalks, streets);
   const heatmap = buildStreetHeatmap(rawWalks, streets.features as StreetFeature[]);
   return {

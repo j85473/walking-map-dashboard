@@ -244,9 +244,10 @@ export default function DashboardClient({ initialSummary }: { initialSummary: Wa
                   <strong>Home → new streets → home</strong>
                   <p>{WALK_HOME.address}</p>
                   <div className="walk-plan-stats"><span>About {walkPlan.estimatedMiles.toFixed(1)} mi total</span><span>{walkPlan.novelMiles.toFixed(2)} new mi targeted</span></div>
-                  <details className="walk-plan-targets"><summary>{walkPlan.sections.length} unfinished section{walkPlan.sections.length === 1 ? "" : "s"} to walk end to end</summary><ol>{walkPlan.sections.map((section, index) => <li key={index}>{section.name}</li>)}</ol></details>
+                  <p>About {(walkPlan.novelMiles / walkPlan.estimatedMiles * 100).toFixed(0)}% new streets across the whole walk</p>
+                  <details className="walk-plan-targets"><summary>{walkPlan.sections.length} unfinished section{walkPlan.sections.length === 1 ? "" : "s"} targeted</summary><ol>{Array.from(new Set(walkPlan.sections.map(section => section.name))).map(name => { const count = walkPlan.sections.filter(section => section.name === name).length; return <li key={name}>{name}{count > 1 ? ` · ${count} sections` : ""}</li>; })}</ol></details>
                   <a className="walk-plan-link" href={walkPlan.url} target="_blank" rel="noopener noreferrer">Open whole walk in Google Maps <ArrowUpRight size={14} /></a>
-                  <p className="walk-plan-note">One continuous route, including the return home. Distance is estimated; Maps chooses the walking paths between stops.</p>
+                  <p className="walk-plan-note">One continuous route, including the return home. Coverage and distance are street-network estimates; Maps chooses the walking paths between stops.</p>
                   <button className="text-action" onClick={() => setWalkPlan(null)}>Clear plan</button>
                 </div>}
               </section>

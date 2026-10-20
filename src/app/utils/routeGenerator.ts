@@ -1,204 +1,203 @@
 import type { FeatureCollection } from "geojson";
-import { simplifyTrack } from "../../lib/simplifyTrack.ts";
-
-type Coordinate = [number, number]; // longitude, latitude
+import { buildStreetGraph, distanceMiles, edgeKey, pointKey, shortestPaths, validCoordinates, type Coordinate } from "./streetGraph.ts";
 
 export const WALK_HOME = {
   address: "2121 Garfield Ave S, Minneapolis, MN",
-  // Resolved by Google Maps for the confirmed address. Directions still use
-  // the address so the same home appears as both the origin and destination.
   coordinates: [-93.2864753, 44.9613767] as Coordinate,
 };
 
-export type WalkSection = {
-  name: string;
-  coordinates: Coordinate[];
-  miles: number;
-};
-
+export type WalkSection = { name: string; coordinates: Coordinate[]; miles: number };
 export type WalkPlan = {
   url: string;
-  // Already-open dashboard tabs use the first entry. It must also contain the
-  // whole loop, never a partial trip ending away from home.
+  // Already-open tabs use the first entry; it also contains the entire loop.
   mobileUrls: [string];
   waypoints: Coordinate[];
   sections: WalkSection[];
+  targetSegments: WalkSection[];
+  networkPath: Coordinate[];
   novelMiles: number;
   estimatedMiles: number;
+  coverageFraction: number;
 };
 
-type Candidate = WalkSection & {
-  id: number;
-  pins: Coordinate[];
-  edges: Map<string, number>;
-};
-type Visit = { section: Candidate; reverse: boolean };
-type SearchState = {
-  visits: Visit[];
-  pins: Coordinate[];
-  edges: Set<string>;
-  novelMiles: number;
-  miles: number;
-  score: number;
-};
+type NovelSegment = WalkSection & { key: string };
+type RemainingSection = WalkSection & { edgeIds: number[] };
+type Leg = { miles: number; novel: number[]; path: number[] };
+type State = { stops: number[]; miles: number; novelMiles: number; closed: number[]; covered: Set<number>; score: number };
 
 export function googleMapsWaypointLimit(userAgent: string, maxTouchPoints = 0): 3 | 9 {
-  const mobileBrowser = /Android|iPhone|iPad|iPod/i.test(userAgent) ||
-    (/Macintosh/i.test(userAgent) && maxTouchPoints > 1);
-  return mobileBrowser ? 3 : 9;
+  return /Android|iPhone|iPad|iPod/i.test(userAgent) || (/Macintosh/i.test(userAgent) && maxTouchPoints > 1) ? 3 : 9;
 }
 
-function distance(a: Coordinate, b: Coordinate) {
-  const radians = Math.PI / 180;
-  const halfLat = (b[1] - a[1]) * radians / 2;
-  const halfLon = (b[0] - a[0]) * radians / 2;
-  const h = Math.sin(halfLat) ** 2 + Math.cos(a[1] * radians) * Math.cos(b[1] * radians) * Math.sin(halfLon) ** 2;
-  return 3958.8 * 2 * Math.asin(Math.sqrt(Math.min(1, h)));
-}
-
-function pointKey(point: Coordinate) {
-  return `${point[0].toFixed(7)},${point[1].toFixed(7)}`;
-}
-
-function edgeKey(a: Coordinate, b: Coordinate) {
-  return [pointKey(a), pointKey(b)].sort().join("|");
-}
-
-function candidatesFrom(geoJSON: FeatureCollection): Candidate[] {
-  const candidates: Candidate[] = [];
-  const seen = new Set<string>();
-  for (const feature of geoJSON.features) {
+function remainingSections(collection: FeatureCollection) {
+  const segments: NovelSegment[] = [], sections: RemainingSection[] = [];
+  const edgeIds = new Map<string, number>(), seen = new Set<string>();
+  for (const feature of collection.features) {
     if (feature.geometry?.type !== "LineString") continue;
-    const raw = feature.geometry.coordinates;
-    if (raw.length < 2 || raw.some(point => point.length < 2 ||
-      !Number.isFinite(point[0]) || !Number.isFinite(point[1]) || Math.abs(point[0]) > 180 || Math.abs(point[1]) > 90)) continue;
-    const coordinates: Coordinate[] = [];
-    for (const point of raw) {
-      const coordinate: Coordinate = [point[0], point[1]];
-      if (!coordinates.length || pointKey(coordinates.at(-1)!) !== pointKey(coordinate)) coordinates.push(coordinate);
-    }
+    const coordinates = validCoordinates(feature.geometry.coordinates);
     if (coordinates.length < 2) continue;
-    const edges = new Map<string, number>();
+    const name = String(feature.properties?.name || "Unnamed street"), ids = new Set<number>();
     let miles = 0;
     for (let index = 1; index < coordinates.length; index++) {
-      const length = distance(coordinates[index - 1], coordinates[index]);
-      edges.set(edgeKey(coordinates[index - 1], coordinates[index]), length);
+      const a = coordinates[index - 1], b = coordinates[index], key = edgeKey(a, b), length = distanceMiles(a, b);
+      let id = edgeIds.get(key);
+      if (id === undefined) {
+        id = segments.length;
+        edgeIds.set(key, id);
+        segments.push({ name, key, coordinates: [a, b], miles: length });
+      }
+      ids.add(id);
       miles += length;
     }
-    const identity = [...edges.keys()].sort().join(";");
+    const identity = [...ids].sort((a, b) => a - b).join(",");
     if (miles < 0.00001 || seen.has(identity)) continue;
     seen.add(identity);
-    // Keep both ends and significant bends, so a stop cannot merely touch the
-    // midpoint of a road. GPS/GeoJSON coordinates use the opposite axis order.
-    const pins = simplifyTrack(coordinates.map(([lon, lat]) => [lat, lon]), 8)
-      .map(([lat, lon]): Coordinate => [lon, lat]);
-    candidates.push({ id: candidates.length, name: String(feature.properties?.name || "Unnamed street"), coordinates, pins, edges, miles });
+    sections.push({ name, coordinates, miles, edgeIds: [...ids] });
   }
-  return candidates;
+  return { segments, sections, edgeIds };
 }
 
-function measure(visits: Visit[]) {
-  let miles = 0;
-  let previous = WALK_HOME.coordinates;
-  const pins: Coordinate[] = [];
-  for (const { section, reverse } of visits) {
-    const sectionPins = reverse ? [...section.pins].reverse() : section.pins;
-    // Outside the mapped sections we have no pedestrian routing engine. Allow
-    // for the street grid, and label this estimate rather than routed mileage.
-    miles += distance(previous, sectionPins[0]) * 1.3 + section.miles;
-    for (const pin of sectionPins) {
-      if (!pins.length || pointKey(pins.at(-1)!) !== pointKey(pin)) pins.push(pin);
-    }
-    previous = sectionPins.at(-1)!;
-  }
-  miles += distance(previous, WALK_HOME.coordinates) * 1.3;
-  return { miles, pins };
+function compare(a: State, b: State) {
+  return b.score - a.score || b.closed.length - a.closed.length || b.novelMiles - a.novelMiles ||
+    a.miles - b.miles || a.stops.length - b.stops.length;
 }
 
-function compare(a: SearchState, b: SearchState) {
-  return b.score - a.score || b.novelMiles - a.novelMiles || a.miles - b.miles;
-}
-
-function directions(origin: string, destination: string, waypoints: string[]) {
-  const params = new URLSearchParams({ api: "1", origin, destination, travelmode: "walking" });
-  if (waypoints.length) params.set("waypoints", waypoints.join("|"));
-  return `https://www.google.com/maps/dir/?${params}`;
-}
-
-/** A bounded coverage search, not a guarantee of the global optimal tour.
- * Every candidate is a complete unfinished section. Both orientations and
- * every insertion position are tried; the best 24 alternatives survive each
- * round. Repeated geometry earns no additional novelty. The return home is
- * included before admitting a section into the distance budget.
+/** Optimize progress per mile over connected streets. A waypoint is an anchor
+ * on a continuous route, not a reservation for one isolated street fragment.
+ * Every leg is routed on the full street graph and contributes unique novel
+ * edges. Retracing an edge costs distance but earns no additional progress.
+ * The bounded search is a heuristic, not a globally optimal tour guarantee.
  */
 export function generateWalkPlan(
   unwalkedGeoJSON: FeatureCollection,
-  options: { maxMiles?: number; maxWaypoints?: number } = {},
+  options: { maxMiles?: number; maxWaypoints?: number; streetNetwork?: FeatureCollection } = {},
 ): WalkPlan | null {
-  const maxMiles = options.maxMiles ?? 7;
-  const requestedWaypoints = options.maxWaypoints ?? 9;
-  // A plan must fit in one Google Maps route, including the return home.
-  // Mobile browsers use a smaller budget, supplied by the client.
+  const maxMiles = options.maxMiles ?? 7, requestedWaypoints = options.maxWaypoints ?? 9;
   const maxWaypoints = Math.min(9, Math.floor(requestedWaypoints));
-  if (!Number.isFinite(maxMiles) || maxMiles <= 0 || !Number.isFinite(requestedWaypoints) || maxWaypoints < 2 ||
+  if (!Number.isFinite(maxMiles) || maxMiles <= 0 || !Number.isFinite(requestedWaypoints) || maxWaypoints < 1 ||
       !unwalkedGeoJSON || !Array.isArray(unwalkedGeoJSON.features)) return null;
-  const candidates = candidatesFrom(unwalkedGeoJSON);
-  const empty: SearchState = { visits: [], pins: [], edges: new Set(), novelMiles: 0, miles: 0, score: 0 };
-  let beam = [empty];
-  let best = empty;
-  const beamWidth = 24;
-
-  for (let round = 0; round < maxWaypoints && beam.length; round++) {
-    const next: SearchState[] = [];
-    const seen = new Set<string>();
-    for (const state of beam) {
-      for (const section of candidates) {
-        if (state.visits.some(visit => visit.section.id === section.id)) continue;
-        let addedMiles = 0;
-        for (const [key, miles] of section.edges) if (!state.edges.has(key)) addedMiles += miles;
-        if (addedMiles < 0.00001) continue;
-        const novelMiles = state.novelMiles + addedMiles;
-        // Reward unique new mileage and finishing a section, not distance
-        // spent on connectors or walking a selected road a second time.
-        const score = novelMiles + (state.visits.length + 1) * 0.05;
-        if (next.length === beamWidth && score < next.at(-1)!.score) continue;
-        for (let position = 0; position <= state.visits.length; position++) {
-          for (const reverse of [false, true]) {
-            const visits = [...state.visits];
-            visits.splice(position, 0, { section, reverse });
-            const identity = visits.map(visit => `${visit.section.id}:${Number(visit.reverse)}`).join(",");
-            if (seen.has(identity)) continue;
-            seen.add(identity);
-            const measured = measure(visits);
-            if (measured.pins.length > maxWaypoints || measured.miles > maxMiles) continue;
-            const edges = new Set(state.edges);
-            for (const key of section.edges.keys()) edges.add(key);
-            const candidate = { visits, ...measured, edges, novelMiles, score };
-            next.push(candidate);
-            next.sort(compare);
-            if (next.length > beamWidth) next.pop();
-          }
-        }
+  const { segments, sections, edgeIds } = remainingSections(unwalkedGeoJSON);
+  if (!sections.length) return null;
+  const graph = buildStreetGraph(options.streetNetwork ?? unwalkedGeoJSON);
+  const homeNode = graph.nodeByKey.get(pointKey(WALK_HOME.coordinates));
+  const candidateNodes = new Set<number>();
+  for (const section of sections) {
+    for (let index = 0; index < section.coordinates.length; index++) {
+      const node = graph.nodeByKey.get(pointKey(section.coordinates[index]));
+      if (node !== undefined && node !== homeNode &&
+          (index === 0 || index === section.coordinates.length - 1 || graph.nodes[node].adjacent.length > 2) &&
+          distanceMiles(WALK_HOME.coordinates, graph.nodes[node].point) * 2 <= maxMiles) candidateNodes.add(node);
+    }
+  }
+  // Bound worst-case work while retaining every anchor in smaller inventories.
+  const candidates = [...candidateNodes];
+  if (candidates.length > 192) candidates.sort((a, b) =>
+    distanceMiles(WALK_HOME.coordinates, graph.nodes[a].point) - distanceMiles(WALK_HOME.coordinates, graph.nodes[b].point));
+  const anchors = [homeNode ?? -1, ...candidates.slice(0, 192)];
+  if (anchors.length < 2) return null;
+  const pairs: (Leg | undefined)[][] = Array.from({ length: anchors.length }, () => []);
+  const novelForEdge = graph.edges.map(edge => edgeIds.get(edge.key));
+  for (let a = 0; a < anchors.length; a++) {
+    if (anchors[a] === -1) continue;
+    const paths = shortestPaths(graph, anchors[a]);
+    pairs[a][a] = { miles: 0, novel: [], path: [anchors[a]] };
+    for (let b = 0; b < anchors.length; b++) {
+      if (a === b || (!graph.directed && b < a) || anchors[b] === -1 || !Number.isFinite(paths.distances[anchors[b]])) continue;
+      const path = [anchors[b]], novel: number[] = [];
+      let current = anchors[b];
+      while (current !== anchors[a]) {
+        const id = novelForEdge[paths.previousEdges[current]];
+        if (id !== undefined) novel.push(id);
+        current = paths.previousNodes[current];
+        path.push(current);
+      }
+      pairs[a][b] = { miles: paths.distances[anchors[b]], novel, path: path.reverse() };
+      if (!graph.directed) pairs[b][a] = { miles: paths.distances[anchors[b]], novel, path: [...path].reverse() };
+    }
+  }
+  if (homeNode === undefined) {
+    // The bundled downtown grid ends before home. Estimate these two access
+    // legs, include both in cost, and award them no speculative new mileage.
+    for (let a = 1; a < anchors.length; a++) {
+      const leg = { miles: distanceMiles(WALK_HOME.coordinates, graph.nodes[anchors[a]].point) * 1.3, novel: [], path: [] };
+      pairs[0][a] = pairs[a][0] = leg;
+    }
+  }
+  const measure = (stops: number[]): State | null => {
+    let miles = 0;
+    const covered = new Set<number>();
+    for (let index = 1; index < stops.length; index++) {
+      const leg = pairs[stops[index - 1]][stops[index]];
+      if (!leg) return null;
+      miles += leg.miles;
+      if (miles > maxMiles) return null;
+      for (const id of leg.novel) covered.add(id);
+    }
+    if (!covered.size || miles <= 0) return null;
+    let novelMiles = 0;
+    for (const id of covered) novelMiles += segments[id].miles;
+    const closed: number[] = [];
+    sections.forEach((section, index) => { if (section.edgeIds.every(id => covered.has(id))) closed.push(index); });
+    // Optimize actual progress per total mile. Completions break efficiency
+    // ties; their count cannot disguise an inefficient walk with tiny gaps.
+    return { stops, miles, novelMiles, covered, closed, score: novelMiles / miles };
+  };
+  const beamWidth = 96;
+  let best: State | null = null;
+  const keep = (state: State | null, beam: State[]) => {
+    if (!state) return;
+    if (state.closed.length && (!best || compare(state, best) < 0)) best = state;
+    if (beam.length === beamWidth && compare(state, beam.at(-1)!) >= 0) return;
+    beam.push(state);
+    beam.sort(compare);
+    if (beam.length > beamWidth) beam.pop();
+  };
+  for (let a = 1; a < anchors.length; a++) keep(measure([0, a, 0]), []);
+  let beam: State[] = [];
+  if (maxWaypoints >= 2) for (let a = 1; a < anchors.length; a++) for (let b = 1; b < anchors.length; b++) {
+    if (a !== b && (graph.directed || a < b)) keep(measure([0, a, b, 0]), beam);
+  }
+  for (let round = 3; round <= maxWaypoints && beam.length; round++) {
+    const next: State[] = [], seen = new Set<string>();
+    for (const state of beam) for (let anchor = 1; anchor < anchors.length; anchor++) {
+      if (state.stops.includes(anchor)) continue;
+      for (let position = 1; position < state.stops.length; position++) {
+        const stops = [...state.stops];
+        stops.splice(position, 0, anchor);
+        const forward = stops.join(","), reverse = [...stops].reverse().join(",");
+        const identity = graph.directed ? forward : [forward, reverse].sort()[0];
+        if (seen.has(identity)) continue;
+        seen.add(identity);
+        keep(measure(stops), next);
       }
     }
     beam = next;
-    if (beam.length && compare(beam[0], best) < 0) best = beam[0];
   }
-  if (!best.visits.length) return null;
-
-  const waypointStrings = best.pins.map(([lon, lat]) => `${lat},${lon}`);
-  const url = directions(WALK_HOME.address, WALK_HOME.address, waypointStrings);
+  // TypeScript cannot follow assignments made inside keep().
+  const chosen = best as State | null;
+  if (!chosen) return null;
+  const waypoints = chosen.stops.slice(1, -1).map(index => graph.nodes[anchors[index]].point);
+  const params = new URLSearchParams({ api: "1", origin: WALK_HOME.address, destination: WALK_HOME.address,
+    travelmode: "walking", waypoints: waypoints.map(([lon, lat]) => `${lat},${lon}`).join("|") });
+  const url = `https://www.google.com/maps/dir/?${params}`;
+  const networkPath: Coordinate[] = [];
+  for (let index = 1; index < chosen.stops.length; index++) {
+    for (const node of pairs[chosen.stops[index - 1]][chosen.stops[index]]!.path) {
+      const point = graph.nodes[node].point;
+      if (!networkPath.length || pointKey(networkPath.at(-1)!) !== pointKey(point)) networkPath.push(point);
+    }
+  }
   return {
-    url,
-    mobileUrls: [url],
-    waypoints: best.pins,
-    sections: best.visits.map(({ section, reverse }) => ({
-      name: section.name,
-      miles: section.miles,
-      coordinates: reverse ? [...section.coordinates].reverse() : section.coordinates,
-    })),
-    novelMiles: best.novelMiles,
-    estimatedMiles: best.miles,
+    url, mobileUrls: [url], waypoints, networkPath,
+    sections: chosen.closed.map(index => {
+      const { name, coordinates, miles } = sections[index];
+      return { name, coordinates, miles };
+    }),
+    targetSegments: [...chosen.covered].map(index => {
+      const { name, coordinates, miles } = segments[index];
+      return { name, coordinates, miles };
+    }),
+    novelMiles: chosen.novelMiles, estimatedMiles: chosen.miles, coverageFraction: chosen.novelMiles / chosen.miles,
   };
 }
 

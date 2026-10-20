@@ -14,7 +14,7 @@ export default function PlannedWalkLayer({ plan }: { plan: WalkPlan }) {
 
   // Highlight the actual targets. Connectors are chosen by Google Maps, so
   // drawing straight lines between these sections would imply a false route.
-  return plan.sections.map((section, index) => <Polyline
+  return (plan.targetSegments ?? plan.sections).map((section, index) => <Polyline
     key={index}
     positions={section.coordinates.map(([lon, lat]) => [lat, lon])}
     pathOptions={{ color: "#22d3ee", weight: 7, opacity: 1 }}

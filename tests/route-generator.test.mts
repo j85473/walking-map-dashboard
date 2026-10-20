@@ -5,160 +5,177 @@ import { generateWalkPlan, generateWalkUrl, googleMapsWaypointLimit, WALK_HOME }
 
 type Coordinate = [number, number];
 const point = (east: number, north: number): Coordinate => [WALK_HOME.coordinates[0] + east, WALK_HOME.coordinates[1] + north];
-const road = (name: string, coordinates: Coordinate[]): Feature<LineString> => ({
-  type: "Feature", properties: { name }, geometry: { type: "LineString", coordinates },
+const road = (name: string, coordinates: Coordinate[], tags: Record<string, string> = {}): Feature<LineString> => ({
+  type: "Feature", properties: { name, highway: "residential", ...tags }, geometry: { type: "LineString", coordinates },
 });
 const collection = (...features: Feature[]): FeatureCollection => ({ type: "FeatureCollection", features });
-const stops = (url: string) => {
+const location = ([lon, lat]: Coordinate) => `${lat},${lon}`;
+const linkStops = (url: string) => {
   const params = new URL(url).searchParams;
   return [params.get("origin")!, ...(params.get("waypoints")?.split("|") ?? []), params.get("destination")!];
 };
-const location = ([lon, lat]: Coordinate) => `${lat},${lon}`;
+const chain = () => {
+  const points = Array.from({ length: 5 }, (_, i) => point(i * 0.001, 0));
+  const unwalked = collection(...points.slice(1, -1).map((a, index) => road(`Section ${index + 1}`, [a, points[index + 2]])));
+  return { points, unwalked, network: collection(road("Corridor", points)) };
+};
 
-test("walks start and end at the confirmed home and target section endpoints", () => {
-  const data = collection(
-    road("First", [point(0, 0.001), point(0.002, 0.001)]),
-    road("Second", [point(0.002, 0.002), point(0.004, 0.002)]),
-  );
-  const before = JSON.stringify(data);
-  const plan = generateWalkPlan(data)!;
+test("one anchor can close multiple unfinished fragments along a connected street", () => {
+  const { unwalked, network } = chain();
+  const plan = generateWalkPlan(unwalked, { streetNetwork: network, maxWaypoints: 1 })!;
   assert.ok(plan);
-  assert.ok(plan.url);
+  assert.equal(plan.waypoints.length, 1);
+  assert.equal(plan.sections.length, 3);
+  assert.ok(plan.novelMiles > 0.14);
+  assert.ok(plan.networkPath.length > plan.waypoints.length);
+});
+
+test("unfinished roads between anchors count even when home lies outside the mapped grid", () => {
+  const { unwalked, points } = chain();
+  const network = collection(road("Mapped corridor", points.slice(1)));
+  const plan = generateWalkPlan(unwalked, { streetNetwork: network, maxWaypoints: 2 })!;
+  assert.equal(plan.sections.length, 3);
+  assert.equal(plan.waypoints.length, 2);
+  assert.ok(plan.novelMiles > 0.14);
+  assert.ok(plan.estimatedMiles > plan.novelMiles);
+});
+
+test("the main link contains all route anchors and returns to the confirmed home", () => {
+  const { unwalked, network } = chain();
+  const plan = generateWalkPlan(unwalked, { streetNetwork: network })!;
   const params = new URL(plan.url).searchParams;
   assert.equal(params.get("origin"), "2121 Garfield Ave S, Minneapolis, MN");
   assert.equal(params.get("destination"), params.get("origin"));
   assert.equal(params.get("travelmode"), "walking");
   assert.equal(params.get("api"), "1");
-  assert.equal(plan.sections.length, 2);
-  for (const section of plan.sections) {
-    const ordered = stops(plan.url);
-    const first = ordered.indexOf(location(section.coordinates[0]));
-    const last = ordered.indexOf(location(section.coordinates.at(-1)!));
-    assert.ok(first > 0 && last > first, "both ends occur in traversal order");
-  }
-  assert.equal(generateWalkUrl(data), plan.url);
-  assert.equal(JSON.stringify(data), before, "planning must not change coverage evidence");
+  assert.deepEqual(linkStops(plan.url), [WALK_HOME.address, ...plan.waypoints.map(location), WALK_HOME.address]);
+  assert.deepEqual(plan.mobileUrls, [plan.url], "already-open tabs must also receive one complete loop");
+  assert.ok(plan.waypoints.length <= 9);
 });
 
-test("coverage beats the nearest midpoint when stops are limited", () => {
-  const plan = generateWalkPlan(collection(
-    road("Tiny nearby fragment", [point(0, 0.0001), point(0.0002, 0.0001)]),
-    road("Longer unfinished road", [point(0.001, 0.001), point(0.009, 0.001)]),
-  ), { maxWaypoints: 2 })!;
+test("efficiency beats a larger isolated fragment that needs a long repeated commute", () => {
+  const near = road("Nearby progress", [point(0.001, 0), point(0.003, 0)]);
+  const far = road("Far fragment", [point(-0.015, 0), point(-0.018, 0)]);
+  const network = collection(road("Near access", [point(0, 0), point(0.001, 0)]), near,
+    road("Long access", [point(0, 0), point(-0.015, 0)]), far);
+  const plan = generateWalkPlan(collection(near, far), { streetNetwork: network })!;
+  assert.deepEqual(plan.sections.map(section => section.name), ["Nearby progress"]);
+  assert.ok(plan.estimatedMiles < 0.5);
+  assert.ok(plan.coverageFraction > 0.3);
+});
+
+test("a new-street circuit wins over retracing the same roads", () => {
+  const points = [point(0, 0), point(0.002, 0), point(0.002, 0.002), point(0, 0.002)];
+  const sides = points.map((a, index) => road(`Side ${index}`, [a, points[(index + 1) % points.length]]));
+  const unwalked = collection(...sides);
+  const plan = generateWalkPlan(unwalked, { streetNetwork: unwalked, maxWaypoints: 3 })!;
+  assert.equal(plan.sections.length, 4);
+  assert.ok(Math.abs(plan.coverageFraction - 1) < 1e-10);
+  assert.ok(Math.abs(plan.novelMiles - plan.estimatedMiles) < 1e-10);
+});
+
+test("out-and-back travel earns new mileage once while both directions count toward distance", () => {
+  const edge = road("New street", [point(0, 0), point(0.002, 0)]);
+  const plan = generateWalkPlan(collection(edge), { streetNetwork: collection(edge) })!;
   assert.equal(plan.sections.length, 1);
-  assert.equal(plan.sections[0].name, "Longer unfinished road");
-  assert.ok(plan.novelMiles > 0.3);
+  assert.ok(Math.abs(plan.coverageFraction - 0.5) < 1e-10);
+  assert.ok(Math.abs(plan.estimatedMiles - plan.novelMiles * 2) < 1e-10);
 });
 
-test("connected sections share stops without forcing arbitrary spacing", () => {
-  const plan = generateWalkPlan(collection(
-    road("One", [point(0, 0.001), point(0.001, 0.001)]),
-    road("Two", [point(0.001, 0.001), point(0.002, 0.001)]),
-    road("Three", [point(0.002, 0.001), point(0.003, 0.001)]),
-  ), { maxWaypoints: 4 })!;
-  assert.equal(plan.sections.length, 3);
-  assert.equal(plan.waypoints.length, 4);
+test("the total distance budget includes the full journey home", () => {
+  const near = point(0.001, 0), end = point(0.002, 0);
+  const unwalked = collection(road("Far end", [near, end]));
+  const streetNetwork = collection(road("Whole street", [point(0, 0), near, end]));
+  assert.equal(generateWalkPlan(unwalked, { streetNetwork, maxMiles: 0.15 }), null);
+  const plan = generateWalkPlan(unwalked, { streetNetwork, maxMiles: 0.21 })!;
+  assert.ok(plan && plan.estimatedMiles <= 0.21);
 });
 
-test("the distance budget reserves the journey home before accepting a road", () => {
-  const remote = road("Too far for a round trip", [point(0, 0.009), point(0.0002, 0.009)]);
-  assert.equal(generateWalkPlan(collection(remote), { maxMiles: 1 }), null);
-  const plan = generateWalkPlan(collection(remote,
-    road("Near home", [point(0, 0.001), point(0.001, 0.001)]),
-  ), { maxMiles: 1 })!;
-  assert.deepEqual(plan.sections.map(section => section.name), ["Near home"]);
-  assert.ok(plan.estimatedMiles <= 1);
-  assert.ok(plan.estimatedMiles > plan.novelMiles);
+test("routes cannot jump from home's network component to a disconnected street", () => {
+  const streetNetwork = collection(road("Home street", [point(0, 0), point(0.001, 0)]),
+    road("Island", [point(0.01, 0.01), point(0.011, 0.01)]));
+  const unwalked = collection(road("Island", [point(0.01, 0.01), point(0.011, 0.01)]));
+  assert.equal(generateWalkPlan(unwalked, { streetNetwork }), null);
 });
 
-test("curved roads retain bends and cannot be substituted with a midpoint visit", () => {
-  const coordinates = [point(0, 0.001), point(0.002, 0.001), point(0.002, 0.003)];
-  const plan = generateWalkPlan(collection(road("Corner", coordinates)))!;
-  assert.ok(plan.url);
-  assert.equal(plan.waypoints.length, 3);
-  for (const coordinate of coordinates) assert.ok(stops(plan.url).includes(location(coordinate)));
-  assert.equal(generateWalkPlan(collection(road("Corner", coordinates)), { maxWaypoints: 2 }), null);
-});
-
-test("duplicate and reversed geometry cannot inflate new mileage", () => {
-  const coordinates = [point(0, 0.001), point(0.002, 0.001), point(0.004, 0.001)];
-  const single = generateWalkPlan(collection(road("Original", coordinates)))!;
-  const repeated = generateWalkPlan(collection(
-    road("Original", coordinates), road("Duplicate", coordinates), road("Reversed", [...coordinates].reverse()),
-  ))!;
+test("duplicate or reversed source geometry cannot inflate novelty or completion count", () => {
+  const coordinates = [point(0, 0), point(0.002, 0)];
+  const original = road("Original", coordinates), reverse = road("Reversed", [...coordinates].reverse());
+  const single = generateWalkPlan(collection(original), { streetNetwork: collection(original) })!;
+  const repeated = generateWalkPlan(collection(original, original, reverse), { streetNetwork: collection(original, reverse) })!;
   assert.equal(repeated.sections.length, 1);
   assert.equal(repeated.novelMiles, single.novelMiles);
+  assert.equal(repeated.estimatedMiles, single.estimatedMiles);
 });
 
-test("repeated GPS points at a section boundary preserve the full target without adding mileage", () => {
-  const start = point(0, 0.001);
-  const end = point(0.002, 0.001);
-  const plain = generateWalkPlan(collection(road("Section", [start, end])))!;
-  const repeatedData = collection(road("Section", [start, start, end, end]));
-  const before = JSON.stringify(repeatedData);
-  const repeated = generateWalkPlan(repeatedData)!;
-  assert.equal(repeated.url, plain.url);
-  assert.equal(repeated.novelMiles, plain.novelMiles);
-  assert.equal(repeated.estimatedMiles, plain.estimatedMiles);
-  assert.equal(JSON.stringify(repeatedData), before);
+test("repeated boundary points preserve geometry, distance, and source evidence", () => {
+  const coordinates = [point(0, 0), point(0, 0), point(0.002, 0), point(0.002, 0)];
+  const unwalked = collection(road("Repeated sample", coordinates));
+  const before = JSON.stringify(unwalked);
+  const plan = generateWalkPlan(unwalked, { streetNetwork: unwalked })!;
+  assert.equal(plan.sections.length, 1);
+  assert.ok(Math.abs(plan.coverageFraction - 0.5) < 1e-10);
+  assert.equal(JSON.stringify(unwalked), before);
 });
 
-test("the primary directions link contains the entire advertised walk and return home", () => {
-  const plan = generateWalkPlan(collection(...Array.from({ length: 4 }, (_, index) =>
-    road(`Road ${index}`, [point(index * 0.003, 0.001), point(index * 0.003 + 0.001, 0.001)]),
-  )))!;
-  assert.equal(plan.sections.length, 4);
-  assert.ok(plan.waypoints.length <= 9);
-  assert.ok(plan.url);
-  assert.equal(new URL(plan.url).searchParams.get("travelmode"), "walking");
-  assert.deepEqual(stops(plan.url), [WALK_HOME.address, ...plan.waypoints.map(location), WALK_HOME.address]);
-  assert.deepEqual(plan.mobileUrls, [plan.url], "the action in already-open tabs must also open the whole loop");
+test("curved street mileage follows the mapped geometry rather than a straight-line shortcut", () => {
+  const a = point(0.001, 0), bend = point(0.001, 0.003), end = point(0.003, 0.003);
+  const unwalked = collection(road("Corner", [a, bend, end]));
+  const network = collection(road("Whole road", [point(0, 0), a, bend, end]));
+  const plan = generateWalkPlan(unwalked, { streetNetwork: network })!;
+  assert.equal(plan.sections.length, 1);
+  assert.ok(plan.networkPath.some(p => p[0] === bend[0] && p[1] === bend[1]));
+  assert.ok(plan.estimatedMiles > 0.65);
 });
 
-test("the planner selects fewer targets when necessary to keep the whole walk in one link", () => {
-  const data = collection(...Array.from({ length: 6 }, (_, index) =>
-    road(`Road ${index}`, [point(index * 0.003, 0.001), point(index * 0.003 + 0.001, 0.001)]),
-  ));
-  const plan = generateWalkPlan(data)!;
-  assert.ok(plan.sections.length < data.features.length);
-  assert.ok(plan.waypoints.length <= 9);
-  assert.deepEqual(stops(plan.url), [WALK_HOME.address, ...plan.waypoints.map(location), WALK_HOME.address]);
-  assert.deepEqual(generateWalkPlan(data, { maxWaypoints: 32 }), plan, "oversized budgets cannot produce a partial main link");
-  for (const section of plan.sections) {
-    assert.ok(stops(plan.url).includes(location(section.coordinates[0])));
-    assert.ok(stops(plan.url).includes(location(section.coordinates.at(-1)!)));
+test("motorways and explicitly private or forbidden foot connections cannot earn progress", () => {
+  for (const tags of [{ highway: "motorway" }, { foot: "no" }, { access: "private" }]) {
+    const forbidden = road("Forbidden", [point(0, 0), point(0.002, 0)], tags);
+    assert.equal(generateWalkPlan(collection(forbidden), { streetNetwork: collection(forbidden) }), null);
   }
 });
 
-test("mobile browser plans fit three intermediate stops and keep home as the final destination", () => {
-  const data = collection(...Array.from({ length: 6 }, (_, index) =>
-    road(`Road ${index}`, [point(index * 0.003, 0.001), point(index * 0.003 + 0.001, 0.001)]),
-  ));
-  const plan = generateWalkPlan(data, { maxWaypoints: 3 })!;
-  assert.ok(plan.sections.length > 0);
-  assert.ok(plan.waypoints.length <= 3);
-  assert.deepEqual(stops(plan.url), [WALK_HOME.address, ...plan.waypoints.map(location), WALK_HOME.address]);
-  assert.deepEqual(plan.mobileUrls, [plan.url]);
+test("pedestrian one-way restrictions require a legal route back home", () => {
+  const home = point(0, 0), east = point(0.002, 0), north = point(0.002, 0.002);
+  const outward = road("One-way footpath", [home, east], { "oneway:foot": "yes" });
+  assert.equal(generateWalkPlan(collection(outward), { streetNetwork: collection(outward) }), null);
+  const circuit = collection(outward,
+    road("Second side", [east, north], { "oneway:foot": "yes" }),
+    road("Return side", [north, home], { "oneway:foot": "yes" }));
+  const plan = generateWalkPlan(circuit, { streetNetwork: circuit })!;
+  assert.equal(plan.sections.length, 3);
+  assert.ok(Math.abs(plan.coverageFraction - 1) < 1e-10);
 });
 
-test("desktop and mobile browser budgets reflect Google's single-route limits", () => {
-  assert.equal(googleMapsWaypointLimit("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Version/18.0 Safari/605.1.15"), 9);
-  assert.equal(googleMapsWaypointLimit("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Mobile Safari"), 3);
-  assert.equal(googleMapsWaypointLimit("Mozilla/5.0 (Linux; Android 15) Chrome Mobile"), 3);
-  assert.equal(googleMapsWaypointLimit("Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X)"), 3);
-  assert.equal(googleMapsWaypointLimit("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Safari", 5), 3);
+test("desktop and mobile limits apply to the whole route without a partial handoff", () => {
+  const { unwalked, network } = chain();
+  for (const maxWaypoints of [3, 9, 32]) {
+    const plan = generateWalkPlan(unwalked, { streetNetwork: network, maxWaypoints })!;
+    assert.ok(plan.waypoints.length <= Math.min(9, maxWaypoints));
+    assert.deepEqual(linkStops(plan.url), [WALK_HOME.address, ...plan.waypoints.map(location), WALK_HOME.address]);
+  }
+  assert.equal(googleMapsWaypointLimit("Mozilla/5.0 (Macintosh; Intel Mac OS X) Safari"), 9);
+  assert.equal(googleMapsWaypointLimit("Mozilla/5.0 (iPhone; CPU iPhone OS) Mobile Safari"), 3);
+  assert.equal(googleMapsWaypointLimit("Mozilla/5.0 (Linux; Android) Chrome Mobile"), 3);
+  assert.equal(googleMapsWaypointLimit("Mozilla/5.0 (iPad; CPU OS) Safari"), 3);
+  assert.equal(googleMapsWaypointLimit("Mozilla/5.0 (Macintosh; Intel Mac OS X) Safari", 5), 3);
 });
 
-test("empty, degenerate, invalid, or non-street geometry cannot produce a walk", () => {
-  assert.equal(generateWalkPlan(collection()), null);
-  assert.equal(generateWalkUrl(collection()), null);
-  const invalid = collection(
-    road("Empty", []), road("Single", [point(0, 0)]), road("Repeated", [point(0, 0), point(0, 0)]),
+test("planning leaves both the remaining roads and the complete network unchanged", () => {
+  const { unwalked, network } = chain();
+  const before = JSON.stringify({ unwalked, network });
+  generateWalkPlan(unwalked, { streetNetwork: network });
+  assert.equal(JSON.stringify({ unwalked, network }), before);
+});
+
+test("empty, invalid, or non-street geometry cannot produce a plan", () => {
+  const invalid = collection(road("Empty", []), road("Single", [point(0, 0)]),
     road("NaN", [[NaN, 44.97], point(0, 0)]), road("Out of range", [[200, 44.97], point(0, 0)]),
-    { type: "Feature", properties: {}, geometry: { type: "Point", coordinates: point(0, 0) } },
-  );
+    { type: "Feature", properties: {}, geometry: { type: "Point", coordinates: point(0, 0) } });
   assert.equal(generateWalkPlan(invalid), null);
-  const valid = collection(road("Valid", [point(0, 0.001), point(0.001, 0.001)]));
-  assert.equal(generateWalkPlan(valid, { maxMiles: NaN }), null);
-  assert.equal(generateWalkPlan(valid, { maxWaypoints: Infinity }), null);
+  assert.equal(generateWalkUrl(collection()), null);
+  const { unwalked, network } = chain();
+  assert.equal(generateWalkPlan(unwalked, { streetNetwork: network, maxMiles: NaN }), null);
+  assert.equal(generateWalkPlan(unwalked, { streetNetwork: network, maxWaypoints: Infinity }), null);
+  assert.equal(generateWalkPlan(unwalked, { streetNetwork: network, maxWaypoints: 0 }), null);
 });
