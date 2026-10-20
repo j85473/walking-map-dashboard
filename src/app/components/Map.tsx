@@ -8,6 +8,7 @@ import RemainingStreetsLayer from "./RemainingStreetsLayer";
 import type { StridingResult } from "../utils/streetMatcher";
 import type { WalkPlan } from "../utils/routeGenerator";
 import PlannedWalkLayer from "./PlannedWalkLayer";
+import CurrentLocation from "./CurrentLocation";
 
 // Minneapolis coordinates
 const center = [44.9778, -93.2650];
@@ -20,9 +21,10 @@ interface MapProps {
   stridingResult: StridingResult | null;
   heatmap: StreetHeatmap | null;
   walkPlan: WalkPlan | null;
+  onLocate: () => void;
 }
 
-export default function Map({ walks, activeWalkId, opacities, viewRemaining, stridingResult, heatmap, walkPlan }: MapProps) {
+export default function Map({ walks, activeWalkId, opacities, viewRemaining, stridingResult, heatmap, walkPlan, onLocate }: MapProps) {
   const activeWalk = activeWalkId ? walks.find(w => w.id === activeWalkId) : null;
   return (
     <MapContainer 
@@ -61,6 +63,7 @@ export default function Map({ walks, activeWalkId, opacities, viewRemaining, str
       )}
       
       <ZoomControl position="bottomright" />
+      <CurrentLocation onLocate={onLocate} />
     </MapContainer>
   );
 }

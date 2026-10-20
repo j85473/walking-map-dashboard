@@ -1,0 +1,9 @@
+[Unit]
+Description=Loopback access for Walking Dashboard HTTPS
+
+[Socket]
+ListenStream=127.0.0.1:3005
+NoDelay=true
+
+[Install]
+WantedBy=sockets.target

@@ -10,6 +10,8 @@ I created this project to visualize urban walkability and gamify the experience 
 
 - **Activity Parsing**: Automatically parses and extracts GPS coordinates from `.gpx`, `.xml`, `.fit`, and compressed `.fit.gz` files (e.g., from Garmin or Strava exports).
 - **Interactive Heatmap**: Visualizes all logged walks on an interactive Leaflet map, with green-to-purple intensity controls and street-aligned lines in the mapped downtown area.
+- **Mobile Map**: Fills the available screen with the map. A bottom arrow opens and closes the scrollable dashboard controls in portrait or landscape.
+- **Current Location**: Tap **My location** and allow browser access to show a live blue dot and accuracy circle. Tap again to recenter. The dot updates while the page is visible without moving the map away from where you pan. Current location stays in the browser; it is not saved as a walk or sent to the dashboard API.
 - **Striding Progress**: Uses spatial grids and Haversine distance calculations to estimate downtown street mileage explored and remaining.
 - **Next Walk Generator**: Plans a loop from home through unfinished streets and back home, prioritizing unique new mileage per total mile walked. Counts progress along connected streets between stops, shows the targets and estimated efficiency, and opens the whole walk in one Google Maps link.
 - **Database Integration**: Synchronizes walk data, dates, distances, and step counts to a PostgreSQL database via Prisma ORM for persistent storage.
@@ -48,7 +50,9 @@ The bounded search considers up to 192 anchors and keeps 96 alternatives per rou
 
 ## M70 production
 
-The production URL is [http://100.107.116.123:3005](http://100.107.116.123:3005) on Joseph's Tailscale network. The application runs under its own `walking-dashboard` system account and uses the `walking_map` schema in M70's PostgreSQL database through a separate database login. Database credentials and GPS tracks stay on the M70, outside Git. The Pi deployment script and PM2 configuration have been retired.
+The production URL is [https://m70.tail35f283.ts.net:8443](https://m70.tail35f283.ts.net:8443) on Joseph's Tailscale network. Use this HTTPS address for browser location access; the original [HTTP address](http://100.107.116.123:3005) still works for viewing walks, but mobile browsers block geolocation there. Location requires permission for this site and device location services. The application runs under its own `walking-dashboard` system account and uses the `walking_map` schema in M70's PostgreSQL database through a separate database login. Database credentials and GPS tracks stay on the M70, outside Git. The Pi deployment script and PM2 configuration have been retired.
+
+To enable private HTTPS on M70, run `sudo bash /opt/walking-dashboard/scripts/deployment/enable-https-m70.sh` after activating a verified release. This adds a loopback socket proxy for the existing Tailscale-only app listener and a Tailscale Serve HTTPS listener on port 8443. It preserves existing Serve applications and rejects a conflicting listener. The socket is enabled at boot; Serve runs in background mode. This uses private Tailscale Serve, with no public Funnel endpoint.
 
 Pushes to `main` trigger the [Verify Walking Dashboard](.github/workflows/verify.yml) GitHub Actions workflow. The M70 checks GitHub every five minutes and activates the exact commit only after its lint, test, and build checks succeed. It builds into a new release directory, switches the `/opt/walking-dashboard` symlink, checks `/api/health`, and restores the previous release if health fails. The timer and web app are supervised by systemd.
 

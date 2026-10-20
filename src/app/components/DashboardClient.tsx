@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
-import { ArrowLeft, ArrowUpRight, CalendarDays, Check, Footprints, Layers3, MapPinned, RotateCw, Route, UploadCloud } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, CalendarDays, Check, ChevronDown, ChevronUp, Footprints, Layers3, MapPinned, RotateCw, Route, UploadCloud } from "lucide-react";
 import CalendarModal from "./CalendarModal";
 import type { DashboardSnapshot } from "@/lib/dashboardData";
 import type { ColorOpacities, WalkSummary } from "@/lib/walkTypes";
@@ -36,6 +36,7 @@ export default function DashboardClient({ initialSummary }: { initialSummary: Wa
   const [loadError, setLoadError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [isCalendarOpen, setIsCalendarOpen] = useState(false);
+  const [controlsOpen, setControlsOpen] = useState(false);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [activeWalkId, setActiveWalkId] = useState<string | null>(null);
   const [viewRemaining, setViewRemaining] = useState(false);
@@ -46,6 +47,7 @@ export default function DashboardClient({ initialSummary }: { initialSummary: Wa
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState({ current: 0, total: 0, phase: "preparing" as "preparing" | "saving" });
   const inputRef = useRef<HTMLInputElement>(null);
+  const controlsToggleRef = useRef<HTMLButtonElement>(null);
   const planCardRef = useRef<HTMLDivElement>(null);
   const requestRef = useRef<AbortController | null>(null);
   const planRequestRef = useRef<AbortController | null>(null);
@@ -206,8 +208,18 @@ export default function DashboardClient({ initialSummary }: { initialSummary: Wa
   };
 
   return (
-    <main className="dashboard-shell">
-      <aside className="dashboard-panel">
+    <main className={`dashboard-shell${controlsOpen ? " controls-open" : ""}`}>
+      <aside className="dashboard-panel" aria-label="Dashboard controls" onKeyDown={event => {
+        if (event.key === "Escape" && controlsOpen) {
+          setControlsOpen(false);
+          controlsToggleRef.current?.focus();
+        }
+      }}>
+        <button ref={controlsToggleRef} className="mobile-panel-toggle" aria-expanded={controlsOpen} aria-controls="dashboard-controls" onClick={() => setControlsOpen(open => !open)}>
+          <span className="mobile-panel-title"><Footprints size={21} /><span><strong>Walk Atlas<span>.</span></strong><span>Walks, layers & routes</span></span></span>
+          <span className="mobile-panel-action">{controlsOpen ? "Hide" : "Controls"}{controlsOpen ? <ChevronDown size={21} /> : <ChevronUp size={21} />}</span>
+        </button>
+        <div id="dashboard-controls" className="panel-body">
         <div className="brand-row">
           <div className="brand-mark"><Footprints size={22} strokeWidth={2.2} /></div>
           <div><div className="eyebrow">DOWNTOWN MINNEAPOLIS</div><h1>Walk Atlas<span>.</span></h1></div>
@@ -224,7 +236,7 @@ export default function DashboardClient({ initialSummary }: { initialSummary: Wa
             <section className="day-view">
               <button className="text-action" onClick={() => { setSelectedDate(null); setActiveWalkId(null); }}><ArrowLeft size={16} /> All walks</button>
               <h3>{new Date(selectedDate).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</h3>
-              <div className="day-list">{selectedDateWalks.map(walk => <button key={walk.id} className={`walk-item ${activeWalkId === walk.id ? "active" : ""}`} onClick={() => setActiveWalkId(activeWalkId === walk.id ? null : walk.id)}><span className="walk-item-name">{walk.name}</span><span className="walk-item-detail">{walk.distanceMiles.toFixed(2)} mi <span>·</span> {walk.steps.toLocaleString()} steps</span></button>)}</div>
+              <div className="day-list">{selectedDateWalks.map(walk => <button key={walk.id} className={`walk-item ${activeWalkId === walk.id ? "active" : ""}`} onClick={() => { setActiveWalkId(activeWalkId === walk.id ? null : walk.id); setControlsOpen(false); controlsToggleRef.current?.focus(); }}><span className="walk-item-name">{walk.name}</span><span className="walk-item-detail">{walk.distanceMiles.toFixed(2)} mi <span>·</span> {walk.steps.toLocaleString()} steps</span></button>)}</div>
               {!selectedDateWalks.length && <p className="muted">No walks found on this day.</p>}
             </section>
           ) : (
@@ -257,15 +269,16 @@ export default function DashboardClient({ initialSummary }: { initialSummary: Wa
           )}
         </div>
         <div className="panel-footer"><span><Check size={13} /> Walks saved to your dashboard</span><button onClick={() => setIsCalendarOpen(true)} disabled={!walks.length}><CalendarDays size={17} /> Calendar</button></div>
+        </div>
       </aside>
       <section className="map-stage" aria-label="Walking map">
-        <Map walks={mapWalks} activeWalkId={activeWalkId} opacities={opacities} viewRemaining={viewRemaining} stridingResult={progress ?? null} heatmap={selectedDate ? null : snapshot?.heatmap ?? null} walkPlan={selectedDate ? null : walkPlan} />
+        <Map walks={mapWalks} activeWalkId={activeWalkId} opacities={opacities} viewRemaining={viewRemaining} stridingResult={progress ?? null} heatmap={selectedDate ? null : snapshot?.heatmap ?? null} walkPlan={selectedDate ? null : walkPlan} onLocate={() => setControlsOpen(false)} />
         <div className="map-topbar"><span className="map-location"><span className="map-location-dot" /> Minneapolis, MN</span><button onClick={() => void loadSnapshot()} aria-label="Refresh dashboard" disabled={status === "loading"}><RotateCw size={16} /> Refresh</button></div>
         {status === "loading" && <div className="map-loading" role="status"><span className="loading-spinner" /><strong>Drawing your map</strong><span>Your walking totals are ready. Routes are loading.</span></div>}
         {status === "error" && !snapshot && <div className="map-loading"><strong>Map unavailable</strong><span>Check the connection and try again.</span><button onClick={() => void loadSnapshot()}>Retry loading</button></div>}
         <div className="map-caption"><span className="caption-line" /><span>{selectedDate ? "SELECTED WALKS" : walkPlan ? "PLANNED STREET TARGETS" : viewRemaining ? "STREETS TO EXPLORE" : "YOUR WALKING FOOTPRINT"}</span></div>
       </section>
-      {isCalendarOpen && <CalendarModal walks={walks} onClose={() => setIsCalendarOpen(false)} onSelectDate={date => { setSelectedDate(date); setActiveWalkId(null); }} />}
+      {isCalendarOpen && <CalendarModal walks={walks} onClose={() => setIsCalendarOpen(false)} onSelectDate={date => { setSelectedDate(date); setActiveWalkId(null); setControlsOpen(true); }} />}
     </main>
   );
 }
