@@ -86,7 +86,11 @@ async function fetchStreets() {
               properties: {
                 id: element.id,
                 name: tags.name || "Unnamed Road",
-                highway: tags.highway
+                highway: tags.highway,
+                // Preserve pedestrian restrictions even on named city roads.
+                foot: tags.foot,
+                access: tags.access,
+                "oneway:foot": tags["oneway:foot"],
               },
               geometry: {
                 type: "LineString",

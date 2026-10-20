@@ -1,4 +1,5 @@
 import type { FeatureCollection } from "geojson";
+import { isWalkableStreet } from "./walkableStreets.ts";
 
 type Coordinate = [number, number]; // longitude, latitude
 type Boundary = readonly (readonly [number, number])[];
@@ -58,7 +59,7 @@ export function splitDowntownStreetNetwork(streets: FeatureCollection, boundary:
   // inventory supplies the existing western, northern and eastern limits.
   const extended: Boundary = [[-180, boundary[0][1]], ...boundary, [180, boundary[boundary.length - 1][1]]];
   for (const feature of streets.features) {
-    if (feature.geometry?.type !== "LineString") continue;
+    if (feature.geometry?.type !== "LineString" || !isWalkableStreet(feature)) continue;
     const coordinates = feature.geometry.coordinates as Coordinate[];
     const pieces: { inside: boolean; coordinates: Coordinate[] }[] = [];
     for (let index = 1; index < coordinates.length; index++) {

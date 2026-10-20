@@ -1,4 +1,5 @@
 import type { FeatureCollection } from "geojson";
+import { isWalkableStreet } from "../../lib/walkableStreets.ts";
 import { buildStreetGraph, distanceMiles, edgeKey, pointKey, shortestPaths, validCoordinates, type Coordinate } from "./streetGraph.ts";
 
 export const WALK_HOME = {
@@ -33,7 +34,7 @@ function remainingSections(collection: FeatureCollection) {
   const segments: NovelSegment[] = [], sections: RemainingSection[] = [];
   const edgeIds = new Map<string, number>(), seen = new Set<string>();
   for (const feature of collection.features) {
-    if (feature.geometry?.type !== "LineString") continue;
+    if (feature.geometry?.type !== "LineString" || !isWalkableStreet(feature)) continue;
     const coordinates = validCoordinates(feature.geometry.coordinates);
     if (coordinates.length < 2) continue;
     const name = String(feature.properties?.name || "Unnamed street"), ids = new Set<number>();

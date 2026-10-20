@@ -6,6 +6,7 @@ import { isInsideDowntownSouthBoundary, splitDowntownStreetNetwork } from "../sr
 import { processCityStriding } from "../src/app/utils/streetMatcher.ts";
 import { distanceMiles } from "../src/app/utils/streetGraph.ts";
 import { generateWalkPlan, WALK_HOME } from "../src/app/utils/routeGenerator.ts";
+import { isWalkableStreet } from "../src/lib/walkableStreets.ts";
 
 function street(coordinates: [number, number][]): FeatureCollection<LineString> {
   return { type: "FeatureCollection", features: [{
@@ -71,7 +72,8 @@ test("the bundled inventory loses only outside portions; routing retains its mil
   const { completionNetwork, routingNetwork } = splitDowntownStreetNetwork(source);
   assert.deepEqual(source, before);
   assert.ok(miles(completionNetwork) < miles(source));
-  assert.ok(Math.abs(miles(source) - miles(routingNetwork)) < 1e-6);
+  const walkableSource = { ...source, features: source.features.filter(isWalkableStreet) };
+  assert.ok(Math.abs(miles(walkableSource) - miles(routingNetwork)) < 1e-6);
   for (const feature of completionNetwork.features) {
     for (const point of (feature.geometry as LineString).coordinates) assert.ok(isInsideDowntownSouthBoundary(point));
   }

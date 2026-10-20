@@ -1,4 +1,5 @@
 import type { FeatureCollection, Position } from "geojson";
+import { isWalkableStreet } from "../../lib/walkableStreets.ts";
 
 export type Coordinate = [number, number]; // longitude, latitude
 export type StreetNode = { point: Coordinate; adjacent: { node: number; edge: number }[] };
@@ -48,9 +49,7 @@ export function buildStreetGraph(network: FeatureCollection): StreetGraph {
   for (const feature of network.features) {
     if (feature.geometry?.type !== "LineString") continue;
     const tags = feature.properties;
-    if (/^(motorway|motorway_link|trunk|trunk_link|construction|proposed)$/.test(tags?.highway ?? "") ||
-        /^(no|private|use_sidepath)$/.test(tags?.foot ?? "") ||
-        (/^(no|private)$/.test(tags?.access ?? "") && !/^(yes|designated|permissive)$/.test(tags?.foot ?? ""))) continue;
+    if (!isWalkableStreet(feature)) continue;
     const coordinates = validCoordinates(feature.geometry.coordinates);
     for (let index = 1; index < coordinates.length; index++) {
       const a = coordinates[index - 1], b = coordinates[index], key = edgeKey(a, b);

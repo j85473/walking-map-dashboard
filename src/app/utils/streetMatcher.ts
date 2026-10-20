@@ -1,4 +1,5 @@
 import type { Walk } from '@/lib/walkTypes';
+import { isWalkableStreet } from '../../lib/walkableStreets.ts';
 
 export type StreetFeature = {
   type: 'Feature';
@@ -6,6 +7,9 @@ export type StreetFeature = {
     id: number;
     name: string;
     highway: string;
+    foot?: string;
+    access?: string;
+    "oneway:foot"?: string;
   };
   geometry: {
     type: 'LineString';
@@ -63,6 +67,7 @@ export function processCityStriding(walks: Walk[], streetsGeoJSON: any): Stridin
   const features = streetsGeoJSON.features as StreetFeature[];
   
   for (const feature of features) {
+    if (!isWalkableStreet(feature)) continue;
     const coords = feature.geometry.coordinates; // [lon, lat]
     if (!coords || coords.length < 2) continue;
 
