@@ -4,6 +4,7 @@ import type { FeatureCollection } from "geojson";
 import { prisma } from "@/lib/prisma";
 import { simplifyTrack } from "@/lib/simplifyTrack";
 import { buildStreetHeatmap, type StreetHeatmap } from "@/lib/streetHeatmap";
+import { splitDowntownStreetNetwork } from "@/lib/downtownBoundary";
 import type { Walk, WalkSummary } from "@/lib/walkTypes";
 import { processCityStriding, type StreetFeature, type StridingResult } from "@/app/utils/streetMatcher";
 
@@ -81,7 +82,8 @@ async function buildSnapshot(): Promise<DashboardSnapshot> {
     points: parseStoredPoints(row.track),
   }));
   const streets = await getStreetNetwork();
-  const progress = processCityStriding(rawWalks, streets);
+  const { completionNetwork } = splitDowntownStreetNetwork(streets);
+  const progress = processCityStriding(rawWalks, completionNetwork);
   const heatmap = buildStreetHeatmap(rawWalks, streets.features as StreetFeature[]);
   return {
     summary: {
