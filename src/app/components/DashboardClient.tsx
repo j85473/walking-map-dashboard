@@ -8,7 +8,7 @@ import type { DashboardSnapshot } from "@/lib/dashboardData";
 import type { ColorOpacities, WalkSummary } from "@/lib/walkTypes";
 import { parseWalkFile } from "@/lib/parseWalkFile";
 import { makeUploadBatches, type UploadBatch, type UploadItem } from "@/lib/uploadBatches";
-import { generateWalkUrl } from "../utils/routeGenerator";
+import { WALK_HOME, type WalkPlan } from "../utils/routeGenerator";
 
 const Map = dynamic(() => import("./Map"), { ssr: false });
 const initialOpacities: ColorOpacities = { green: 6, yellow: 2.5, orange: 2.5, red: 2.5, purple: 2.5 };
@@ -39,12 +39,16 @@ export default function DashboardClient({ initialSummary }: { initialSummary: Wa
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [activeWalkId, setActiveWalkId] = useState<string | null>(null);
   const [viewRemaining, setViewRemaining] = useState(false);
+  const [walkPlan, setWalkPlan] = useState<WalkPlan | null>(null);
+  const [isPlanning, setIsPlanning] = useState(false);
   const [opacities, setOpacities] = useState<ColorOpacities>(initialOpacities);
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState({ current: 0, total: 0, phase: "preparing" as "preparing" | "saving" });
   const inputRef = useRef<HTMLInputElement>(null);
+  const planCardRef = useRef<HTMLDivElement>(null);
   const requestRef = useRef<AbortController | null>(null);
+  const planRequestRef = useRef<AbortController | null>(null);
 
   const loadSnapshot = useCallback(async () => {
     requestRef.current?.abort();
@@ -52,6 +56,9 @@ export default function DashboardClient({ initialSummary }: { initialSummary: Wa
     requestRef.current = controller;
     setStatus("loading");
     setLoadError(null);
+    setWalkPlan(null);
+    planRequestRef.current?.abort();
+    setIsPlanning(false);
     try {
       let loaded: DashboardSnapshot | null = null;
       for (let attempt = 0; attempt < 2; attempt++) {
@@ -83,8 +90,12 @@ export default function DashboardClient({ initialSummary }: { initialSummary: Wa
   useEffect(() => {
     let active = true;
     queueMicrotask(() => { if (active) void loadSnapshot(); });
-    return () => { active = false; requestRef.current?.abort(); };
+    return () => { active = false; requestRef.current?.abort(); planRequestRef.current?.abort(); };
   }, [loadSnapshot]);
+
+  useEffect(() => {
+    if (walkPlan) planCardRef.current?.scrollIntoView({ block: "nearest" });
+  }, [walkPlan]);
 
   const uploadFiles = async (files: FileList | File[]) => {
     if (isUploading) return;
@@ -166,11 +177,27 @@ export default function DashboardClient({ initialSummary }: { initialSummary: Wa
   const progress = snapshot?.progress;
   const completed = progress && progress.totalMiles > 0 ? Math.min(100, progress.walkedMiles / progress.totalMiles * 100) : 0;
 
-  const planWalk = () => {
-    if (!progress) return;
-    const url = generateWalkUrl(progress.unwalkedGeoJSON);
-    if (url) window.open(url, "_blank", "noopener,noreferrer");
-    else setMessage("No remaining streets were found for a suggested walk.");
+  const planWalk = async () => {
+    if (!progress || isPlanning) return;
+    const controller = new AbortController();
+    planRequestRef.current = controller;
+    setIsPlanning(true);
+    setMessage(null);
+    setWalkPlan(null);
+    try {
+      const response = await fetch("/api/plan-walk", { method: "POST", signal: AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]) });
+      if (!response.ok) throw new Error(`Walk planning failed (${response.status}). Please try again.`);
+      const { plan } = await response.json() as { plan: WalkPlan | null };
+      if (controller.signal.aborted) return;
+      setWalkPlan(plan);
+      if (!plan) setMessage(progress.unwalkedGeoJSON.features.length
+        ? "No unfinished street sections fit a walk of about 7 miles including the return home."
+        : "No remaining streets were found for a suggested walk.");
+    } catch (error) {
+      if (!controller.signal.aborted) setMessage(readableError(error));
+    } finally {
+      if (!controller.signal.aborted) setIsPlanning(false);
+    }
   };
 
   return (
@@ -207,7 +234,18 @@ export default function DashboardClient({ initialSummary }: { initialSummary: Wa
                 <div className="progress-track"><div style={{ width: `${completed}%` }} /></div>
                 <div className="progress-labels"><span>{progress ? progress.walkedMiles.toFixed(1) : "—"} mi explored</span><span>{progress ? progress.remainingMiles.toFixed(1) : "—"} mi to go</span></div>
                 <div className="segmented-control" role="group" aria-label="Map view"><button className={!viewRemaining ? "selected" : ""} onClick={() => setViewRemaining(false)}><Layers3 size={15} /> Heatmap</button><button className={viewRemaining ? "selected" : ""} onClick={() => setViewRemaining(true)}><MapPinned size={15} /> Remaining</button></div>
-                <button className="route-button" onClick={planWalk} disabled={!progress}><span>Plan a walk</span><ArrowUpRight size={17} /></button>
+                <button className="route-button" onClick={() => void planWalk()} disabled={!progress || status !== "ready" || isPlanning}><span>{isPlanning ? "Planning your walk…" : "Plan a walk"}</span><Route size={17} /></button>
+                {walkPlan && <div ref={planCardRef} className="walk-plan" role="region" aria-label="Planned walk">
+                  <strong>Home → new streets → home</strong>
+                  <p>{WALK_HOME.address}</p>
+                  <div className="walk-plan-stats"><span>About {walkPlan.estimatedMiles.toFixed(1)} mi total</span><span>{walkPlan.novelMiles.toFixed(2)} new mi targeted</span></div>
+                  <details className="walk-plan-targets"><summary>{walkPlan.sections.length} unfinished section{walkPlan.sections.length === 1 ? "" : "s"} to walk end to end</summary><ol>{walkPlan.sections.map((section, index) => <li key={index}>{section.name}</li>)}</ol></details>
+                  <a className="walk-plan-link" href={walkPlan.mobileUrls[0]} target="_blank" rel="noopener noreferrer">Start walk in Google Maps <ArrowUpRight size={14} /></a>
+                  {walkPlan.url && walkPlan.mobileUrls.length > 1 && <a className="walk-plan-link" href={walkPlan.url} target="_blank" rel="noopener noreferrer">Full route for desktop <ArrowUpRight size={14} /></a>}
+                  {walkPlan.mobileUrls.length > 1 && <details className="walk-plan-parts"><summary>Walking directions · {walkPlan.mobileUrls.length} parts</summary><p>Follow these parts in order. The last part brings you home.</p>{walkPlan.mobileUrls.map((url, index) => <a key={index} href={url} target="_blank" rel="noopener noreferrer">Part {index + 1}{index === 0 ? " · leave home" : index === walkPlan.mobileUrls.length - 1 ? " · return home" : ""}<ArrowUpRight size={13} /></a>)}</details>}
+                  <p className="walk-plan-note">Distance is estimated. Check the walking route in Maps before heading out; Maps chooses the paths between stops.</p>
+                  <button className="text-action" onClick={() => setWalkPlan(null)}>Clear plan</button>
+                </div>}
               </section>
               <section className="controls-section"><div className="section-heading"><div><div className="section-kicker">MAKE THE MAP YOURS</div><h3>Heatmap intensity</h3></div></div><div className="sliders">{colorSettings.map(({ key, label, color }) => <label key={key} className="slider-row"><span className="swatch" style={{ background: color }} /><span>{label}</span><input aria-label={`${label} intensity`} disabled={viewRemaining} type="range" min="0.5" max="10" step="0.1" value={opacities[key]} onChange={event => setOpacities(previous => ({ ...previous, [key]: Number(event.target.value) }))} style={{ accentColor: color }} /><output>{opacities[key].toFixed(1)}×</output></label>)}</div></section>
               <section className="upload-section-new"><div className="section-heading"><div><div className="section-kicker">KEEP EXPLORING</div><h3>Add your walks</h3></div></div><div className={`drop-zone ${isDragging ? "dragging" : ""}`} onDragOver={event => { event.preventDefault(); setIsDragging(true); }} onDragLeave={() => setIsDragging(false)} onDrop={event => { event.preventDefault(); setIsDragging(false); void uploadFiles(event.dataTransfer.files); }}><UploadCloud size={22} /><div><strong>{isUploading ? `${uploadProgress.phase === "saving" ? "Saving" : "Preparing"} ${uploadProgress.current} of ${uploadProgress.total} files` : "Drop GPX or FIT files here"}</strong><span>or choose files from your device</span></div><button disabled={isUploading} onClick={() => inputRef.current?.click()}>Browse files</button><input ref={inputRef} type="file" accept=".gpx,.xml,.fit,.fit.gz" multiple onChange={event => { if (event.target.files) void uploadFiles(event.target.files); event.target.value = ""; }} /></div></section>
@@ -217,11 +255,11 @@ export default function DashboardClient({ initialSummary }: { initialSummary: Wa
         <div className="panel-footer"><span><Check size={13} /> Walks saved to your dashboard</span><button onClick={() => setIsCalendarOpen(true)} disabled={!walks.length}><CalendarDays size={17} /> Calendar</button></div>
       </aside>
       <section className="map-stage" aria-label="Walking map">
-        <Map walks={mapWalks} activeWalkId={activeWalkId} opacities={opacities} viewRemaining={viewRemaining} stridingResult={progress ?? null} heatmap={selectedDate ? null : snapshot?.heatmap ?? null} />
+        <Map walks={mapWalks} activeWalkId={activeWalkId} opacities={opacities} viewRemaining={viewRemaining} stridingResult={progress ?? null} heatmap={selectedDate ? null : snapshot?.heatmap ?? null} walkPlan={selectedDate ? null : walkPlan} />
         <div className="map-topbar"><span className="map-location"><span className="map-location-dot" /> Minneapolis, MN</span><button onClick={() => void loadSnapshot()} aria-label="Refresh dashboard" disabled={status === "loading"}><RotateCw size={16} /> Refresh</button></div>
         {status === "loading" && <div className="map-loading" role="status"><span className="loading-spinner" /><strong>Drawing your map</strong><span>Your walking totals are ready. Routes are loading.</span></div>}
         {status === "error" && !snapshot && <div className="map-loading"><strong>Map unavailable</strong><span>Check the connection and try again.</span><button onClick={() => void loadSnapshot()}>Retry loading</button></div>}
-        <div className="map-caption"><span className="caption-line" /><span>{selectedDate ? "SELECTED WALKS" : viewRemaining ? "STREETS TO EXPLORE" : "YOUR WALKING FOOTPRINT"}</span></div>
+        <div className="map-caption"><span className="caption-line" /><span>{selectedDate ? "SELECTED WALKS" : walkPlan ? "PLANNED STREET TARGETS" : viewRemaining ? "STREETS TO EXPLORE" : "YOUR WALKING FOOTPRINT"}</span></div>
       </section>
       {isCalendarOpen && <CalendarModal walks={walks} onClose={() => setIsCalendarOpen(false)} onSelectDate={date => { setSelectedDate(date); setActiveWalkId(null); }} />}
     </main>

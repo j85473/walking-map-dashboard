@@ -51,6 +51,19 @@ button:focus-visible,input:focus-visible { outline:3px solid #74afff; outline-of
 .segmented-control button.selected { background:#21436f; color:#e5f1ff; box-shadow:0 2px 7px #02091c7a; }
 .route-button { width:100%; height:39px; margin-top:9px; display:flex; justify-content:space-between; align-items:center; padding:0 14px; border:1px solid #3566a5; border-radius:9px; background:#173660; color:#d4e6ff; font-size:12px; font-weight:800; }
 .route-button:hover { background:#24508b; }
+.walk-plan { margin-top:12px; padding:14px; border:1px solid #3566a5; border-radius:11px; background:#12243f; font-size:12px; line-height:1.5; }
+.walk-plan>strong { color:#e1edff; font-size:14px; }
+.walk-plan p { margin:8px 0; color:#b8c9e3; }
+.walk-plan-stats { display:flex; flex-wrap:wrap; gap:5px 14px; color:#83e8ed; font-weight:750; }
+.walk-plan ol { padding-left:20px; margin:7px 0 12px; color:#d3e3fa; }
+.walk-plan a { color:#b0d3ff; text-decoration:underline; text-underline-offset:3px; }
+.walk-plan-link,.walk-plan-parts a { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 0; }
+.walk-plan-parts { margin-top:9px; padding-top:5px; border-top:1px solid #34486b; }
+.walk-plan summary { cursor:pointer; padding:6px 0; color:#d3e3fa; }
+.walk-plan-targets { margin-top:6px; }
+.walk-plan .walk-plan-note { font-size:11px; color:#a7b9d6; }
+.walk-plan .text-action { border:0; padding:5px 0; color:#b0d3ff; background:transparent; text-decoration:underline; }
+.walk-plan a:focus-visible { outline:3px solid #74afff; outline-offset:3px; }
 .controls-section { margin-top:24px; padding-top:21px; }
 .sliders { display:grid; gap:8px; margin-top:18px; }
 .slider-row { display:grid; grid-template-columns:9px 47px minmax(0,1fr) 32px; gap:9px; align-items:center; color:#cbd8ed; font-size:11px; font-weight:650; }

@@ -1,111 +1,203 @@
-import { FeatureCollection, LineString } from 'geojson';
+import type { FeatureCollection } from "geojson";
+import { simplifyTrack } from "../../lib/simplifyTrack.ts";
 
-// Haversine distance in miles
-function getDistanceMiles(lat1: number, lon1: number, lat2: number, lon2: number) {
-  const R = 3958.8; // Radius of the earth in miles
-  const dLat = (lat2 - lat1) * (Math.PI / 180);
-  const dLon = (lon2 - lon1) * (Math.PI / 180);
-  const a = 
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) * 
-    Math.sin(dLon / 2) * Math.sin(dLon / 2); 
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)); 
-  const d = R * c; // Distance in miles
-  return d;
+type Coordinate = [number, number]; // longitude, latitude
+
+export const WALK_HOME = {
+  address: "2121 Garfield Ave S, Minneapolis, MN",
+  // Used for distance estimates only; Google Maps resolves the actual address.
+  coordinates: [-93.2858, 44.9609] as Coordinate,
+};
+
+export type WalkSection = {
+  name: string;
+  coordinates: Coordinate[];
+  miles: number;
+};
+
+export type WalkPlan = {
+  url: string | null;
+  mobileUrls: string[];
+  waypoints: Coordinate[];
+  sections: WalkSection[];
+  novelMiles: number;
+  estimatedMiles: number;
+};
+
+type Candidate = WalkSection & {
+  id: number;
+  pins: Coordinate[];
+  edges: Map<string, number>;
+};
+type Visit = { section: Candidate; reverse: boolean };
+type SearchState = {
+  visits: Visit[];
+  pins: Coordinate[];
+  edges: Set<string>;
+  novelMiles: number;
+  miles: number;
+  score: number;
+};
+
+function distance(a: Coordinate, b: Coordinate) {
+  const radians = Math.PI / 180;
+  const halfLat = (b[1] - a[1]) * radians / 2;
+  const halfLon = (b[0] - a[0]) * radians / 2;
+  const h = Math.sin(halfLat) ** 2 + Math.cos(a[1] * radians) * Math.cos(b[1] * radians) * Math.sin(halfLon) ** 2;
+  return 3958.8 * 2 * Math.asin(Math.sqrt(Math.min(1, h)));
 }
 
-// Find the midpoint of a LineString
-function getMidpoint(coords: number[][]): [number, number] {
-  if (coords.length === 0) return [0, 0];
-  if (coords.length === 1) return [coords[0][0], coords[0][1]];
-  
-  // For simplicity, take the geometric average of all points in the segment
-  let sumLon = 0;
-  let sumLat = 0;
-  coords.forEach(pt => {
-    sumLon += pt[0];
-    sumLat += pt[1];
-  });
-  return [sumLon / coords.length, sumLat / coords.length];
+function pointKey(point: Coordinate) {
+  return `${point[0].toFixed(7)},${point[1].toFixed(7)}`;
 }
 
-export function generateWalkUrl(unwalkedGeoJSON: FeatureCollection): string | null {
-  if (!unwalkedGeoJSON || unwalkedGeoJSON.features.length === 0) {
-    return null;
-  }
+function edgeKey(a: Coordinate, b: Coordinate) {
+  return [pointKey(a), pointKey(b)].sort().join("|");
+}
 
-  // Default starting coordinates (US Bank Stadium, Minneapolis)
-  const HOME_LON = -93.2575;
-  const HOME_LAT = 44.9735;
-  
-  // Mobile Google Maps strictly limits to 9 waypoints
-  const MAX_WAYPOINTS = 9; 
-  
-  let currentLon = HOME_LON;
-  let currentLat = HOME_LAT;
-  const waypoints: [number, number][] = [];
-  
-  const availableFeatures = [...unwalkedGeoJSON.features];
-
-  while (waypoints.length < MAX_WAYPOINTS && availableFeatures.length > 0) {
-    let bestFeatureIndex = -1;
-    let shortestDist = Infinity;
-    let bestMidpoint: [number, number] = [0, 0];
-
-    // To force a long 5-7 mile walk on just 9 waypoints, we must space them far apart.
-    // We look for the closest street that is at least 0.35 miles away.
-    for (let i = 0; i < availableFeatures.length; i++) {
-      const feature = availableFeatures[i];
-      if (feature.geometry.type !== 'LineString') continue;
-      
-      const geom = feature.geometry as LineString;
-      const midpoint = getMidpoint(geom.coordinates);
-      const dist = getDistanceMiles(currentLat, currentLon, midpoint[1], midpoint[0]);
-      
-      // If we are starting from home, we just want the closest edge of downtown.
-      // But once we are in downtown, we force the waypoints to be spaced out.
-      const minSpacing = waypoints.length === 0 ? 0 : 0.35;
-
-      if (dist >= minSpacing && dist < shortestDist) {
-        shortestDist = dist;
-        bestFeatureIndex = i;
-        bestMidpoint = midpoint;
-      }
+function candidatesFrom(geoJSON: FeatureCollection): Candidate[] {
+  const candidates: Candidate[] = [];
+  const seen = new Set<string>();
+  for (const feature of geoJSON.features) {
+    if (feature.geometry?.type !== "LineString") continue;
+    const raw = feature.geometry.coordinates;
+    if (raw.length < 2 || raw.some(point => point.length < 2 ||
+      !Number.isFinite(point[0]) || !Number.isFinite(point[1]) || Math.abs(point[0]) > 180 || Math.abs(point[1]) > 90)) continue;
+    const coordinates: Coordinate[] = [];
+    for (const point of raw) {
+      const coordinate: Coordinate = [point[0], point[1]];
+      if (!coordinates.length || pointKey(coordinates.at(-1)!) !== pointKey(coordinate)) coordinates.push(coordinate);
     }
+    if (coordinates.length < 2) continue;
+    const edges = new Map<string, number>();
+    let miles = 0;
+    for (let index = 1; index < coordinates.length; index++) {
+      const length = distance(coordinates[index - 1], coordinates[index]);
+      edges.set(edgeKey(coordinates[index - 1], coordinates[index]), length);
+      miles += length;
+    }
+    const identity = [...edges.keys()].sort().join(";");
+    if (miles < 0.00001 || seen.has(identity)) continue;
+    seen.add(identity);
+    // Keep both ends and significant bends, so a stop cannot merely touch the
+    // midpoint of a road. GPS/GeoJSON coordinates use the opposite axis order.
+    const pins = simplifyTrack(coordinates.map(([lon, lat]) => [lat, lon]), 8)
+      .map(([lat, lon]): Coordinate => [lon, lat]);
+    candidates.push({ id: candidates.length, name: String(feature.properties?.name || "Unnamed street"), coordinates, pins, edges, miles });
+  }
+  return candidates;
+}
 
-    // Fallback if no streets are 0.35 miles away
-    if (bestFeatureIndex === -1) {
-      shortestDist = Infinity;
-      for (let i = 0; i < availableFeatures.length; i++) {
-        const feature = availableFeatures[i];
-        if (feature.geometry.type !== 'LineString') continue;
-        const geom = feature.geometry as LineString;
-        const midpoint = getMidpoint(geom.coordinates);
-        const dist = getDistanceMiles(currentLat, currentLon, midpoint[1], midpoint[0]);
-        if (dist < shortestDist) {
-          shortestDist = dist;
-          bestFeatureIndex = i;
-          bestMidpoint = midpoint;
+function measure(visits: Visit[]) {
+  let miles = 0;
+  let previous = WALK_HOME.coordinates;
+  const pins: Coordinate[] = [];
+  for (const { section, reverse } of visits) {
+    const sectionPins = reverse ? [...section.pins].reverse() : section.pins;
+    // Outside the mapped sections we have no pedestrian routing engine. Allow
+    // for the street grid, and label this estimate rather than routed mileage.
+    miles += distance(previous, sectionPins[0]) * 1.3 + section.miles;
+    for (const pin of sectionPins) {
+      if (!pins.length || pointKey(pins.at(-1)!) !== pointKey(pin)) pins.push(pin);
+    }
+    previous = sectionPins.at(-1)!;
+  }
+  miles += distance(previous, WALK_HOME.coordinates) * 1.3;
+  return { miles, pins };
+}
+
+function compare(a: SearchState, b: SearchState) {
+  return b.score - a.score || b.novelMiles - a.novelMiles || a.miles - b.miles;
+}
+
+function directions(origin: string, destination: string, waypoints: string[]) {
+  const params = new URLSearchParams({ api: "1", origin, destination, travelmode: "walking" });
+  if (waypoints.length) params.set("waypoints", waypoints.join("|"));
+  return `https://www.google.com/maps/dir/?${params}`;
+}
+
+/** A bounded coverage search, not a guarantee of the global optimal tour.
+ * Every candidate is a complete unfinished section. Both orientations and
+ * every insertion position are tried; the best 24 alternatives survive each
+ * round. Repeated geometry earns no additional novelty. The return home is
+ * included before admitting a section into the distance budget.
+ */
+export function generateWalkPlan(
+  unwalkedGeoJSON: FeatureCollection,
+  options: { maxMiles?: number; maxWaypoints?: number } = {},
+): WalkPlan | null {
+  const maxMiles = options.maxMiles ?? 7;
+  const requestedWaypoints = options.maxWaypoints ?? 32;
+  const maxWaypoints = Math.min(32, Math.floor(requestedWaypoints));
+  if (!Number.isFinite(maxMiles) || maxMiles <= 0 || !Number.isFinite(requestedWaypoints) || maxWaypoints < 2 ||
+      !unwalkedGeoJSON || !Array.isArray(unwalkedGeoJSON.features)) return null;
+  const candidates = candidatesFrom(unwalkedGeoJSON);
+  const empty: SearchState = { visits: [], pins: [], edges: new Set(), novelMiles: 0, miles: 0, score: 0 };
+  let beam = [empty];
+  let best = empty;
+  const beamWidth = 24;
+
+  for (let round = 0; round < maxWaypoints && beam.length; round++) {
+    const next: SearchState[] = [];
+    const seen = new Set<string>();
+    for (const state of beam) {
+      for (const section of candidates) {
+        if (state.visits.some(visit => visit.section.id === section.id)) continue;
+        let addedMiles = 0;
+        for (const [key, miles] of section.edges) if (!state.edges.has(key)) addedMiles += miles;
+        if (addedMiles < 0.00001) continue;
+        const novelMiles = state.novelMiles + addedMiles;
+        // Reward unique new mileage and finishing a section, not distance
+        // spent on connectors or walking a selected road a second time.
+        const score = novelMiles + (state.visits.length + 1) * 0.05;
+        if (next.length === beamWidth && score < next.at(-1)!.score) continue;
+        for (let position = 0; position <= state.visits.length; position++) {
+          for (const reverse of [false, true]) {
+            const visits = [...state.visits];
+            visits.splice(position, 0, { section, reverse });
+            const identity = visits.map(visit => `${visit.section.id}:${Number(visit.reverse)}`).join(",");
+            if (seen.has(identity)) continue;
+            seen.add(identity);
+            const measured = measure(visits);
+            if (measured.pins.length > maxWaypoints || measured.miles > maxMiles) continue;
+            const edges = new Set(state.edges);
+            for (const key of section.edges.keys()) edges.add(key);
+            const candidate = { visits, ...measured, edges, novelMiles, score };
+            next.push(candidate);
+            next.sort(compare);
+            if (next.length > beamWidth) next.pop();
+          }
         }
       }
     }
-
-    if (bestFeatureIndex === -1) break;
-
-    waypoints.push(bestMidpoint);
-    currentLon = bestMidpoint[0];
-    currentLat = bestMidpoint[1];
-    
-    // Remove the feature so we don't pick it again
-    availableFeatures.splice(bestFeatureIndex, 1);
+    beam = next;
+    if (beam.length && compare(beam[0], best) < 0) best = beam[0];
   }
+  if (!best.visits.length) return null;
 
-  if (waypoints.length === 0) return null;
+  const waypointStrings = best.pins.map(([lon, lat]) => `${lat},${lon}`);
+  const stops = [WALK_HOME.address, ...waypointStrings, WALK_HOME.address];
+  const mobileUrls: string[] = [];
+  // Google Maps supports 3 intermediate stops in mobile browsers, 9 elsewhere.
+  // Each part ends where the next starts; the final part always ends at home.
+  for (let index = 0; index < stops.length - 1; index += 4) {
+    const end = Math.min(index + 4, stops.length - 1);
+    mobileUrls.push(directions(stops[index], stops[end], stops.slice(index + 1, end)));
+  }
+  return {
+    url: waypointStrings.length <= 9 ? directions(WALK_HOME.address, WALK_HOME.address, waypointStrings) : null,
+    mobileUrls,
+    waypoints: best.pins,
+    sections: best.visits.map(({ section, reverse }) => ({
+      name: section.name,
+      miles: section.miles,
+      coordinates: reverse ? [...section.coordinates].reverse() : section.coordinates,
+    })),
+    novelMiles: best.novelMiles,
+    estimatedMiles: best.miles,
+  };
+}
 
-  // Build Google Maps URL
-  const homeStr = "US+Bank+Stadium,+Minneapolis,+MN";
-  const wpStrings = waypoints.map(wp => `${wp[1]},${wp[0]}`).join('|');
-  
-  const url = `https://www.google.com/maps/dir/?api=1&origin=${homeStr}&destination=${homeStr}&waypoints=${wpStrings}&travelmode=walking`;
-  return url;
+export function generateWalkUrl(unwalkedGeoJSON: FeatureCollection): string | null {
+  return generateWalkPlan(unwalkedGeoJSON, { maxWaypoints: 9 })?.url ?? null;
 }
