@@ -118,3 +118,82 @@ test("planner targets align with partial unwalked sections and avoid already col
   assert.deepEqual(features, before);
   assert.deepEqual(walks, originalWalks);
 });
+
+const meters = (east: number, north: number): Coordinate => [a[0] + east / 78750, a[1] + north / 111132];
+const junction = () => [
+  street(1, [meters(-100, 0), meters(-4, 0)], "West block"),
+  street(2, [meters(-4, 0), meters(0, 0)], "West junction piece"),
+  street(3, [meters(0, 0), meters(0, 4)], "North junction piece"),
+  street(4, [meters(0, 4), meters(0, 100)], "North block"),
+  street(5, [meters(0, 0), meters(100, 0)], "Unused east block"),
+];
+
+test("consecutive sidewalk-offset fixes cover connected junction pieces during a turn", () => {
+  const features = junction();
+  const analysis = buildStreetCoverage([walk([gps(meters(-8, 6)), gps(meters(-6, 8))])], features);
+  assert.ok(analysis.progress.unwalkedGeoJSON.features.every(feature => ![2, 3].includes(feature.properties.id)));
+  const untouched = analysis.progress.unwalkedGeoJSON.features.filter(feature => feature.properties.id === 5);
+  assert.equal(untouched.length, 1);
+  assert.deepEqual(untouched[0].geometry.coordinates[0], features[4].geometry.coordinates[0]);
+  assert.deepEqual(untouched[0].geometry.coordinates.at(-1), features[4].geometry.coordinates.at(-1));
+  assert.ok(analysis.progress.remainingMiles > analysis.progress.totalMiles * 0.8);
+  assertComplement(features, analysis);
+});
+
+test("straight through movement covers short OSM pieces even without a GPS fix on each piece", () => {
+  const features = [
+    street(1, [meters(-100, 0), meters(-3, 0)]),
+    street(2, [meters(-3, 0), meters(3, 0)]),
+    street(3, [meters(3, 0), meters(100, 0)]),
+  ];
+  const analysis = buildStreetCoverage([walk([gps(meters(-8, 6)), gps(meters(8, 6))])], features);
+  assert.ok(analysis.progress.unwalkedGeoJSON.features.every(feature => feature.properties.id !== 2));
+  assert.ok(analysis.progress.remainingMiles > analysis.progress.totalMiles * 0.7);
+  assertComplement(features, analysis);
+});
+
+test("separate walks cannot jointly invent a traversal of the intersection", () => {
+  const features = junction();
+  const analysis = buildStreetCoverage([walk([gps(meters(-8, 6))]), { ...walk([gps(meters(-6, 8))]), id: "second" }], features);
+  for (const id of [2, 3]) assert.ok(analysis.progress.unwalkedGeoJSON.features.some(feature => feature.properties.id === id));
+  assertComplement(features, analysis);
+});
+
+test("junction inference does not bridge sparse GPS or detour between parallel roads", () => {
+  const features = junction();
+  const sparse = buildStreetCoverage([walk([gps(meters(-40, 6)), gps(meters(-6, 40))])], features);
+  for (const id of [2, 3]) assert.ok(sparse.progress.unwalkedGeoJSON.features.some(feature => feature.properties.id === id));
+  const parallel = [
+    street(1, [meters(-100, 0), meters(100, 0)]),
+    street(2, [meters(-100, 14), meters(100, 14)]),
+    street(3, [meters(100, 0), meters(100, 14)]),
+  ];
+  const analysis = buildStreetCoverage([walk([gps(meters(0, 2)), gps(meters(0, 12))])], parallel);
+  assert.ok(analysis.progress.unwalkedGeoJSON.features.some(feature => feature.properties.id === 3));
+  assert.ok(analysis.progress.remainingMiles > analysis.progress.totalMiles * 0.8);
+  assertComplement(parallel, analysis);
+});
+
+test("junction connections respect prohibited foot access and pedestrian direction", () => {
+  for (const restriction of [{ foot: "no" }, { "oneway:foot": "-1" }]) {
+    const features = junction();
+    Object.assign(features[1].properties, restriction);
+    const analysis = buildStreetCoverage([walk([gps(meters(-8, 6)), gps(meters(-6, 8))])], features);
+    assert.ok(analysis.progress.unwalkedGeoJSON.features.some(feature => feature.properties.id === 3));
+    assertComplement(features.filter(feature => feature.properties.foot !== "no"), analysis);
+  }
+});
+
+test("a short connected detour outside the recorded GPS corridor remains unwalked", () => {
+  const features = [
+    street(1, [meters(-100, 0), meters(-4, 0)]),
+    street(2, [meters(-4, 0), meters(0, 25), meters(4, 0)]),
+    street(3, [meters(4, 0), meters(100, 0)]),
+  ];
+  const analysis = buildStreetCoverage([walk([gps(meters(-8, -10)), gps(meters(8, -10))])], features);
+  const connector = analysis.progress.unwalkedGeoJSON.features.find(feature => feature.properties.id === 2);
+  assert.ok(connector);
+  assert.deepEqual(connector.geometry.coordinates[0], features[1].geometry.coordinates[0]);
+  assert.deepEqual(connector.geometry.coordinates.at(-1), features[1].geometry.coordinates.at(-1));
+  assertComplement(features, analysis);
+});

@@ -4,6 +4,7 @@ import type { StreetFeature, StridingResult } from "../app/utils/streetMatcher";
 import { simplifyTrack } from "./simplifyTrack.ts";
 import { isWalkableStreet } from "./walkableStreets.ts";
 import { distanceMiles, edgeKey } from "../app/utils/streetGraph.ts";
+import { createStreetCoverageConnector } from "./streetCoverageConnections.ts";
 
 type Point = [number, number]; // latitude, longitude
 export type StreetHeatSegment = { start: Point; end: Point; visits: number };
@@ -145,12 +146,14 @@ export function buildStreetCoverage(walks: Walk[], features: StreetFeature[], co
   const unmatchedRoutes: Point[][] = [];
   const maxMatchSquared = MATCH_METERS * MATCH_METERS;
   const maxGapSquared = MAX_GPS_GAP_METERS * MAX_GPS_GAP_METERS;
+  const connectMatches = createStreetCoverageConnector(segments, MATCH_METERS);
 
   for (const walk of walks) {
     const walkedBins = new Set<number>();
     let fallback: Point[] = [];
     let previousSegmentIndex = -1;
     let previousBin = -1;
+    let previousFraction = 0;
     let previousX = 0;
     let previousY = 0;
     const flushFallback = () => {
@@ -190,9 +193,15 @@ export function buildStreetCoverage(walks: Walk[], features: StreetFeature[], co
           for (let current = Math.min(bin, previousBin); current <= Math.max(bin, previousBin); current++) {
             walkedBins.add(segment.offset + current);
           }
+        } else if (previousSegmentIndex >= 0) {
+          connectMatches(
+            { segment: previousSegmentIndex, fraction: previousFraction, x: previousX, y: previousY },
+            { segment: nearestIndex, fraction: nearestFraction, x, y }, walkedBins,
+          );
         }
         previousSegmentIndex = nearestIndex;
         previousBin = bin;
+        previousFraction = nearestFraction;
         previousX = x;
         previousY = y;
       } else {
